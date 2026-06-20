@@ -10,6 +10,18 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg)](https://www.typescriptlang.org/)
 [![Local First](https://img.shields.io/badge/local--first-agent%20workspace-9ff6c4.svg)](#local-first)
 
+## 中文项目介绍
+
+Orbit 是一个面向真实软件项目的多 Agent Mission Control 工作台，核心解决的问题是：AI 编程工具很强，但单个 Agent 经常会因为额度用完、上下文断裂、任务拆不清、协作边界混乱或交付结果不可验证而中断。Orbit 把这些零散的 Agent 会话升级成一套可接力、可协作、可追踪、可沉淀记忆的本地项目操作系统。
+
+它的最大亮点是 **Agent 接力** 和 **Agent 协作**。当 Claude Code 用到一半额度不足，Codex CLI 可以在同一个工作区、同一个项目目标、同一套任务上下文和历史 Memory 里继续执行；当任务足够复杂时，Orbit 主 Agent 会先生成 `PlanArtifact / TaskDAG / TaskContract`，再把有边界的任务派给 Codex CLI、Claude Code 等执行 Agent，并通过文件范围、完成标准、验证命令、协作事件和交付证据来约束它们，避免多个 Agent 各干各的。
+
+Orbit 的 Memory 系统分为短期任务状态、情节长期记忆、语义/流程记忆三层。它不会粗暴地把所有聊天记录塞给每个 Agent，而是把当前任务 DAG、历史失败/修复经验、项目规则、Agent 能力、验证结果和可复用流程筛选成下一次规划真正需要的上下文。这让新 Agent 可以接住前一个 Agent 的工作，而不是重新问一遍、重新猜一遍。
+
+Orbit 还深度融合 EvoMAP 自进化 MCP。主 Agent 在规划前可以通过 EvoMAP 拉取 Genes、Capsules、Recipes、Assets 和语义复用上下文，把外部已经验证过的经验注入任务拆解与执行策略中。Orbit 不是把 EvoMAP 当成一个隐藏开关，而是把它放在 Integration / Evolution 层：设置页可以看到 OAuth 状态、MCP 探测、重置授权和连接状态；规划层会把 EvoMAP 的可复用知识转化为主 Agent 的预规划上下文。
+
+简单说，Orbit 想解决的是 AI 编程从“单次聊天”到“连续项目交付”的断层：它让 Codex、Claude Code、Hermes 和 EvoMAP 在统一工作区里形成一套能计划、能接力、能协作、能验证、能记忆、能进化的 Agent 工作流。
+
 Orbit is a local-first desktop command center for running real project work across multiple AI coding agents.
 
 It is not another multi-model chat shell. Orbit is a main-agent orchestration layer: it accepts a project goal, reads workspace context and memory, builds a task DAG, assigns bounded contracts to worker agents such as Codex CLI and Claude Code, monitors evidence, verifies output, and synthesizes the final result.
