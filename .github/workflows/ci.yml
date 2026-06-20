@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  verify:
+    # Windows runner 匹配开发环境（适配器探测/mock-codex.cmd 等为 Windows 相关）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 与开发环境一致(Node 24 / npm 11)：npm 11 才会正确跳过 esbuild 平台 optional 依赖；
+          # Node 20/npm 10 会对 @esbuild/<其它平台> 报 EBADPLATFORM。
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
