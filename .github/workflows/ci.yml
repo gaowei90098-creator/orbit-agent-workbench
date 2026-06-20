@@ -22,6 +22,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Ensure Electron binary
+        run: |
+          npm rebuild electron
+          node -e "console.log(require('electron'))"
+
       - name: Typecheck
         run: npm run typecheck
 
