@@ -4,6 +4,14 @@ Always read `PROJECT_MEMORY.md` before changing this project.
 
 This workspace is named `AgentForge-MissionControl`. It is the future source workspace for the AgentHub-to-main-Agent pivot.
 
+Public release repository:
+
+- Canonical public GitHub repo: `https://github.com/gaowei90098-creator/orbit-agent-workbench`.
+- Current product name: `Orbit`.
+- Use the `workbench` remote for the new public repo. The old `origin` / `orbit` remotes may still exist locally for historical reference and must not be treated as the release target.
+- Ignore local-only `.claude/worktrees/`, `reference_repos/`, `node_modules/`, `out/`, and `dist/` when checking what has been published.
+- Before a new session changes code, compare against `workbench/main` or the latest `PROJECT_MEMORY.md` entry so the session does not resurrect older AgentHub/Orbit-Hub state.
+
 This repository is being turned into a main Agent / Orchestrator product:
 
 - AgentHub receives a project goal.

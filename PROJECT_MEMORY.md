@@ -1293,3 +1293,70 @@ Next recommended work:
 1. Create/push the new `orbit-agent-workbench` GitHub repository from the sanitized current source snapshot.
 2. Add screenshots/GIFs to the README after taking polished desktop captures.
 3. Add release artifacts once the macOS app is notarized or a non-notarized developer preview policy is documented.
+
+## 2026-06-21 GitHub Launch Final Sync and Workspace Audit
+
+Final public repository:
+
+- URL: `https://github.com/gaowei90098-creator/orbit-agent-workbench`
+- Visibility: public
+- Default branch: `main`
+- Latest pushed commit at audit time: `70b9bec042ca2e0f7ab9da7a273bfe3fcd18f36a`
+- Passing CI run: `https://github.com/gaowei90098-creator/orbit-agent-workbench/actions/runs/27878591835`
+
+Implemented after initial publish:
+
+- Added a Chinese project introduction near the top of `README.md`.
+  - Highlights Orbit as Agent Mission Control.
+  - Explains the product problem: quota exhaustion, broken context, unclear collaboration, unverifiable delivery, and repeated project re-explanation.
+  - Highlights Agent relay between Claude Code and Codex CLI.
+  - Highlights Agent collaboration through Orbit main Agent, `PlanArtifact`, `TaskDAG`, and `TaskContract`.
+  - Explains layered Memory and RAG-like retrieval.
+  - Emphasizes EvoMAP MCP integration: Genes, Capsules, Recipes, Assets, semantic reuse context, OAuth status, MCP probe, reset, and pre-planning injection.
+- Added `src/main/orbit-runtime.cjs` to the public repo. This file is required by `scripts/sync-orbit-runtime.mjs` during `npm run build`.
+- Fixed CI for the new `main` branch:
+  - `.github/workflows/ci.yml` now runs on `main` and `master`.
+  - `vitest.config.ts` aliases `electron` to `test/electron-stub.ts`, so tests do not depend on downloading a real Electron binary.
+  - ESLint ignores `.claude/**`, `reference_repos/**`, and the generated runtime bundle path used as canonical Electron runtime source.
+- Updated `AGENTS.md` with public-release instructions:
+  - use `workbench` remote for `orbit-agent-workbench`;
+  - treat old `origin` / `orbit` remotes as historical only;
+  - ignore local `.claude/worktrees`, `reference_repos`, `node_modules`, `out`, and `dist` while auditing published source.
+
+Workspace audit:
+
+- A checksum-based dry-run sync from `/Users/gao90098/Desktop/AgentForge-MissionControl` to `/tmp/orbit-agent-workbench-publish` showed no content differences for publishable files, only timestamp differences.
+- Ignored/local-only material is not part of the public source:
+  - `.claude/worktrees/`
+  - `reference_repos/`
+  - `node_modules/`
+  - `out/`
+  - `dist/`
+  - root generated `index.js`
+  - root generated `orbit-runtime.cjs`
+- Registered local worktrees were inspected.
+  - `/private/tmp/orbit-hub-pr-worktree` is clean but belongs to old `orbit-hub` PR work and is not the new release source.
+  - `.claude/worktrees/*` are local Claude worktrees. They are old/local-only and ignored from publish. One contains an untracked generated `index.js`; it is not a source change to merge.
+- The current working tree remains dirty relative to its older historical git branch, but the publishable file content has been uploaded to the new public repo via the clean release snapshot.
+- New sessions should treat `workbench/main` and this `PROJECT_MEMORY.md` entry as the latest public truth, not the older `origin` or `orbit` remotes.
+
+Validation:
+
+- Local validation after the final CI fixes:
+  - `npm run typecheck` passed.
+  - `npm run lint` passed.
+  - `npm test` passed: 35 test files, 183 tests.
+  - `npm run build` passed.
+  - `npm run unpack` passed.
+- Desktop delivery was previously refreshed for the same runtime/app-affecting codebase:
+  - `/Users/gao90098/Desktop/Orbit.app` replaced and ad-hoc signed.
+  - `codesign --verify --deep --strict --verbose=2 /Users/gao90098/Desktop/Orbit.app` passed.
+  - Relaunched app PID `25685`.
+  - Confirmed listeners `127.0.0.1:9527` and `127.0.0.1:9528`.
+  - EvoMAP status returned `connected:true`, `tokenSource:"stored-encrypted"`, `pendingCount:0`.
+
+Next recommended work:
+
+1. In the next chat, start from `/Users/gao90098/Desktop/AgentForge-MissionControl`, read this file first, and target the `workbench` remote / `orbit-agent-workbench` repo.
+2. For any future GitHub publish, sync current source into a clean snapshot or align this local git history with `workbench/main` before pushing.
+3. Add polished screenshots/GIFs to README and create a GitHub Release once a signed/notarized installer policy is ready.
