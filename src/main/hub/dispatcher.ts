@@ -903,7 +903,7 @@ export class Dispatcher extends EventEmitter {
     }, (prompt) => this.callSupervisorLLM(leadAgentId, prompt, opts))
   }
 
-  private async callSupervisorLLM(agentId: string, prompt: string, opts: DispatchOptions): Promise<string | undefined> {
+  private async callSupervisorLLM(agentId: string, prompt: string, _opts: DispatchOptions): Promise<string | undefined> {
     try {
       const agentInfo = this.registry.get(agentId)
       if (agentInfo && (agentInfo.adapter as any).protocol && (agentInfo.adapter as any).protocol !== 'http') return undefined

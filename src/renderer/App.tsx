@@ -313,7 +313,7 @@ export default function App() {
     const off = window.electronAPI?.hub?.onStream?.((e: any) => {
       const tid: string = e.taskId
       if (!tid || ignoredTasks.current.has(tid)) return
-      let conversationId = taskToConversation.current.get(tid) || pendingConversationId.current || currentConversationId.current || activeConversationId
+      const conversationId = taskToConversation.current.get(tid) || pendingConversationId.current || currentConversationId.current || activeConversationId
       if (conversationId && !taskToConversation.current.has(tid)) taskToConversation.current.set(tid, conversationId)
 
       // 写/执行审批请求：交给全局覆盖层弹窗，不依赖消息簿记（不入 msgId 流程）
