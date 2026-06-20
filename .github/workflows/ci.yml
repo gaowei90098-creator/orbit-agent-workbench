@@ -22,13 +22,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Ensure Electron binary
-        run: |
-          Remove-Item -Recurse -Force node_modules/electron/dist -ErrorAction SilentlyContinue
-          Remove-Item -Force node_modules/electron/path.txt -ErrorAction SilentlyContinue
-          node node_modules/electron/install.js
-          node -e "console.log(require('electron'))"
-
       - name: Typecheck
         run: npm run typecheck
 
