@@ -1301,8 +1301,9 @@ Final public repository:
 - URL: `https://github.com/gaowei90098-creator/orbit-agent-workbench`
 - Visibility: public
 - Default branch: `main`
-- Latest pushed commit at audit time: `70b9bec042ca2e0f7ab9da7a273bfe3fcd18f36a`
-- Passing CI run: `https://github.com/gaowei90098-creator/orbit-agent-workbench/actions/runs/27878591835`
+- Source of truth: `workbench/main` on `gaowei90098-creator/orbit-agent-workbench`
+- Latest SHA should be checked with `git ls-remote workbench main` or the GitHub commit page, because updating this memory file creates a new commit.
+- CI pipeline was verified passing on GitHub Actions after the launch sync; check the latest run at `https://github.com/gaowei90098-creator/orbit-agent-workbench/actions`.
 
 Implemented after initial publish:
 
