@@ -3,7 +3,7 @@
 interface ElectronAPI {
   hub: {
     getStatus: () => Promise<any>
-    dispatch: (text: string, mode?: string, targetAgent?: string, opts?: { thinking?: any; workspaceId?: string | null; requirePlanApproval?: boolean }) => Promise<any>
+    dispatch: (text: string, mode?: string, targetAgent?: string, opts?: { thinking?: any; workspaceId?: string | null; requirePlanApproval?: boolean; rounds?: number; participants?: string[] }) => Promise<any>
     approvePlan: (taskId: string, approved: boolean) => Promise<boolean>
     cancel: (taskId: string) => Promise<boolean>
     onStatus: (callback: (data: any) => void) => () => void
@@ -38,6 +38,10 @@ interface ElectronAPI {
   }
   proxy: {
     info: () => Promise<{ url: string; openaiUrl?: string; anthropicUrl?: string; running: boolean }>
+  }
+  network: {
+    getProxy: () => Promise<string>
+    setProxy: (url: string) => Promise<string>
   }
   agents: {
     locate: () => Promise<Record<string, Array<{ source: 'desktop' | 'terminal'; label: string; path: string }>>>

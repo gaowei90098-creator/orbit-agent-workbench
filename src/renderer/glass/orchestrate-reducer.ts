@@ -10,12 +10,21 @@ export function initialOrchestrateState(): OrchestrateState {
   return { phase: 'planning', subtasks: [] }
 }
 
+function subtaskStatus(value: unknown): OrchestrateSubtask['status'] {
+  if (value === 'running') return 'running'
+  if (value === 'done' || value === 'completed') return 'done'
+  if (value === 'error' || value === 'failed' || value === 'blocked' || value === 'cancelled') return 'error'
+  return 'pending'
+}
+
 /** 纯函数：依据一条 orchestrate:* 事件返回新状态（不可变更新）。未知事件原样返回。 */
 export function applyOrchestrateEvent(prev: OrchestrateState | undefined, ev: any): OrchestrateState {
   const state: OrchestrateState = prev
     ? { ...prev, subtasks: prev.subtasks.map(s => ({ ...s })) }
     : initialOrchestrateState()
-  const base = ev?.taskId ? { ...state, taskId: String(ev.taskId), missionId: ev.missionId ?? state.missionId } : state
+  const base = ev?.taskId
+    ? { ...state, taskId: String(ev.taskId), missionId: ev.missionId ?? state.missionId, sharedContextPath: ev.sharedContextPath ?? state.sharedContextPath }
+    : state
 
   switch (ev?.kind) {
     case 'orchestrate:plan': {
@@ -30,7 +39,7 @@ export function applyOrchestrateEvent(prev: OrchestrateState | undefined, ev: an
             doneWhen: s.doneWhen,
             verifyCommand: s.verifyCommand,
             interfaceRef: s.interfaceRef,
-            status: 'pending' as const,
+            status: subtaskStatus(s.status),
             content: ''
           }))
         : []
@@ -39,7 +48,8 @@ export function applyOrchestrateEvent(prev: OrchestrateState | undefined, ev: an
         phase: ev.planArtifact?.status === 'awaiting-approval' ? 'awaiting-approval' : 'running',
         subtasks,
         leadAgentId: ev.leadAgentId ?? state.leadAgentId,
-        planArtifact: ev.planArtifact ?? state.planArtifact
+        planArtifact: ev.planArtifact ?? state.planArtifact,
+        sharedContextPath: ev.sharedContextPath ?? state.sharedContextPath
       }
     }
 

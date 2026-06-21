@@ -17,6 +17,8 @@ import {
   ThinkingConfig
 } from './types'
 import { BUILTIN_PROVIDERS, THINKING_BUDGET_TOKENS } from './presets'
+import { anthropicModelsUrl, openAIChatCompletionsUrl, openAIModelsUrl } from './endpoints'
+import { proxyFetch } from '../net/http'
 
 const STORAGE_KEY = 'providers.config.v1'
 
@@ -465,14 +467,21 @@ export class ProviderManager extends EventEmitter {
     }
     const start = Date.now()
     try {
+      if (p.kind === 'openai' || p.kind === 'openai-compatible' || p.kind === 'custom') {
+        const h = await this.checkOpenAICompatibleHealth(p, start)
+        p.health = h
+        this.save()
+        return h
+      }
+
       const url = this.healthUrl(p)
       const headers = this.buildHeaders(p)
-      const res = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(8000) })
+      const res = await proxyFetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(8000) })
       const latencyMs = Date.now() - start
       // 401/403 = 鉴权失败：服务器虽响应，但 key 无效，不应显示为“可达/绿灯”
       const unauthorized = res.status === 401 || res.status === 403
       const h: import('./types').ProviderHealth = {
-        reachable: !unauthorized && res.status < 500,
+        reachable: !unauthorized && res.status < 400,
         status: unauthorized ? 'unauthorized' : (res.status < 400 ? 'ok' : 'error'),
         lastCheck: Date.now(),
         latencyMs,
@@ -486,6 +495,81 @@ export class ProviderManager extends EventEmitter {
       p.health = h
       this.save()
       return h
+    }
+  }
+
+  private async checkOpenAICompatibleHealth(p: ProviderDefinition, start: number): Promise<import('./types').ProviderHealth> {
+    const headers = this.buildHeaders(p)
+    const chatUrl = openAIChatCompletionsUrl(p.baseUrl)
+    const fullChatEndpoint = chatUrl === p.baseUrl.trim().replace(/\/+$/g, '')
+    if (fullChatEndpoint && p.models[0]?.id) {
+      return this.checkOpenAIChatHealth(p, start)
+    }
+
+    const modelsUrl = openAIModelsUrl(p.baseUrl)
+    let res: Response
+    try {
+      res = await proxyFetch(modelsUrl, { method: 'GET', headers, signal: AbortSignal.timeout(3500) })
+    } catch (e) {
+      if (p.models[0]?.id) return this.checkOpenAIChatHealth(p, start)
+      throw e
+    }
+    const latencyMs = Date.now() - start
+    if (res.status < 400) {
+      return { reachable: true, status: 'ok', lastCheck: Date.now(), latencyMs }
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { reachable: false, status: 'unauthorized', lastCheck: Date.now(), latencyMs, error: `鉴权失败 (HTTP ${res.status})` }
+    }
+    if ((res.status === 404 || res.status === 405) && p.models[0]?.id) {
+      return this.checkOpenAIChatHealth(p, start)
+    }
+    return {
+      reachable: false,
+      status: 'error',
+      lastCheck: Date.now(),
+      latencyMs,
+      error: `HTTP ${res.status}`
+    }
+  }
+
+  private async checkOpenAIChatHealth(p: ProviderDefinition, start: number): Promise<import('./types').ProviderHealth> {
+    const model = p.models[0]?.id
+    if (!model) {
+      return {
+        reachable: false,
+        status: 'error',
+        lastCheck: Date.now(),
+        latencyMs: Date.now() - start,
+        error: '未设置模型名'
+      }
+    }
+    const body = {
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      stream: false
+    }
+    const res = await proxyFetch(openAIChatCompletionsUrl(p.baseUrl), {
+      method: 'POST',
+      headers: this.buildHeaders(p),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(12000)
+    })
+    const latencyMs = Date.now() - start
+    if (res.status < 400) {
+      return { reachable: true, status: 'ok', lastCheck: Date.now(), latencyMs }
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { reachable: false, status: 'unauthorized', lastCheck: Date.now(), latencyMs, error: `鉴权失败 (HTTP ${res.status})` }
+    }
+    const txt = await res.text().catch(() => '')
+    const detail = txt ? `: ${txt.slice(0, 160)}` : ''
+    return {
+      reachable: false,
+      status: 'error',
+      lastCheck: Date.now(),
+      latencyMs,
+      error: `Chat Completions HTTP ${res.status}${detail}`
     }
   }
 
@@ -505,10 +589,17 @@ export class ProviderManager extends EventEmitter {
       const url = p.kind === 'gemini'
         ? `${base}/models?key=${encodeURIComponent(p.apiKey)}&pageSize=200`
         : p.kind === 'anthropic'
-          ? `${base}/models?limit=200`
-          : `${base}/models`
-      const res = await fetch(url, { method: 'GET', headers: this.buildHeaders(p), signal: AbortSignal.timeout(10000) })
-      if (res.status >= 400) return { ok: false, error: `HTTP ${res.status}` }
+          ? `${anthropicModelsUrl(p.baseUrl)}?limit=200`
+          : openAIModelsUrl(p.baseUrl)
+      const res = await proxyFetch(url, { method: 'GET', headers: this.buildHeaders(p), signal: AbortSignal.timeout(10000) })
+      if (res.status >= 400) {
+        if ((p.kind === 'openai' || p.kind === 'openai-compatible' || p.kind === 'custom') &&
+            (res.status === 404 || res.status === 405) &&
+            p.models.length > 0) {
+          return { ok: true, count: p.models.length }
+        }
+        return { ok: false, error: `HTTP ${res.status}` }
+      }
       const j: any = await res.json()
 
       let raw: Array<{ id: string; label?: string; contextWindow?: number }> = []
@@ -552,9 +643,9 @@ export class ProviderManager extends EventEmitter {
       case 'openai':
       case 'openai-compatible':
       case 'custom':
-        return `${p.baseUrl.replace(/\/$/, '')}/models`
+        return openAIModelsUrl(p.baseUrl)
       case 'anthropic':
-        return `${p.baseUrl.replace(/\/$/, '')}/models`
+        return anthropicModelsUrl(p.baseUrl)
       case 'gemini':
         return `${p.baseUrl.replace(/\/$/, '')}/models?key=${encodeURIComponent(p.apiKey)}`
     }

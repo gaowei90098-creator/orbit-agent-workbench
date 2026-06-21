@@ -41,6 +41,26 @@ describe('orchestrator helpers', () => {
     expect(s).toContain('结果A')
     expect(s).toContain('超时')
     expect(s).toContain('需求')
+    // 部分失败：禁止把未验证/已有文件当交付物
+    expect(s).toContain('Some subtasks failed')
+  })
+
+  it('synthesisPrompt 全部失败时给出强约束（不得伪造交付物）', () => {
+    const s = synthesisPrompt('做个页面', [
+      { title: 'A', agentId: 'codex', content: '', error: 'exit 1' },
+      { title: 'B', agentId: 'claude', content: '', error: 'blocked' }
+    ])
+    expect(s).toContain('EVERY subtask failed')
+    expect(s).toContain('Do NOT claim any deliverable is complete')
+    expect(s).not.toContain('Synthesize the successful outputs into the deliverable')
+  })
+
+  it('synthesisPrompt 全部成功时引导正常交付', () => {
+    const s = synthesisPrompt('需求', [
+      { title: 'A', content: '结果A' },
+      { title: 'B', content: '结果B' }
+    ])
+    expect(s).toContain('Synthesize the successful outputs into the deliverable')
   })
 
   it('parseVerdict 识别 PASS / FAIL:原因 / 歧义宽松通过', () => {

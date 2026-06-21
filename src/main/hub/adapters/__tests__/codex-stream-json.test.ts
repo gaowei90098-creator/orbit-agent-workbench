@@ -73,6 +73,18 @@ describe("parseCodexStreamJsonLine", () => {
     expect(parseCodexStreamJsonLine(line)).toEqual({ content: "Done." })
   })
 
+  it("extracts final answer from nested agent_message content shapes", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "item_4b",
+        type: "agent_message",
+        content: [{ type: "output_text", text: "Nested " }, { type: "output_text", text: "done." }]
+      }
+    })
+    expect(parseCodexStreamJsonLine(line)).toEqual({ content: "Nested done." })
+  })
+
   it("passes non-JSON lines through as content", () => {
     expect(parseCodexStreamJsonLine("plain text answer")).toEqual({ content: "plain text answer\n" })
   })

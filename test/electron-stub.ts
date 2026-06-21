@@ -31,5 +31,7 @@ export const Menu = { buildFromTemplate: () => ({}), setApplicationMenu: () => {
 export const nativeImage = { createFromPath: () => ({}) }
 export class BrowserWindow {}
 export const contextBridge = { exposeInMainWorld: () => {} }
+export const net = { fetch: (...args: any[]) => (globalThis.fetch as any)(...args) }
+export const session = { defaultSession: { setProxy: () => Promise.resolve() } }
 
-export default { app, safeStorage, ipcMain, ipcRenderer, shell, dialog, Menu, nativeImage, BrowserWindow, contextBridge }
+export default { app, safeStorage, ipcMain, ipcRenderer, shell, dialog, Menu, nativeImage, BrowserWindow, contextBridge, net, session }

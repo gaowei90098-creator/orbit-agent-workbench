@@ -159,8 +159,12 @@ export class StdioAgentAdapter extends BaseAgentAdapter {
       this.proc = null
       this.status = 'idle'
       if (failed) {
-        const detail = this.decodeStderr().trim().slice(-500)
-        this.handleError(new Error(this.name + ' 退出码 ' + code + (detail ? '：' + detail : '')))
+        let detail = this.decodeStderr().trim()
+        // 某些 CLI（如 Codex）把错误对象误格式化成 "[object Object]"，或只把错误写到 stdout。
+        // 这类 stderr 对用户毫无信息量 → 回退到 stdout 尾部，避免抛出 "退出码 1：[object Object]"。
+        if (!detail || /^(\[object Object\])+$/.test(detail)) detail = this.buffer.trim()
+        detail = detail.slice(-500)
+        this.handleError(new Error(this.name + ' 退出码 ' + code + '：' + (detail || '(无错误输出)')))
       }
     })
 

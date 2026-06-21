@@ -229,7 +229,6 @@ function FirstRunPanel({ summary, openSetup, goChat }: {
   openSetup: (tab?: SetupTab) => void
   goChat: (agentId: string | null) => void
 }) {
-  const ready = summary.counts.usable + summary.counts.busy
   const mainItem = summary.items.find(item => item.agentId === MAIN_AGENT_ID)
   const mainReady = !!mainItem && (mainItem.state === 'usable' || mainItem.state === 'busy')
   const workerReadyItems = summary.items.filter(item => EXECUTION_AGENT_IDS.includes(item.agentId) && (item.state === 'usable' || item.state === 'busy'))

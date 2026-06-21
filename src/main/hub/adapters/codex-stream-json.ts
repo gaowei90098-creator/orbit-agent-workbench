@@ -40,6 +40,21 @@ function truncate(value: unknown, max: number): string {
   return text.length > max ? text.slice(0, max) + '…' : text
 }
 
+function firstText(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const parts = value
+      .map(part => firstText(part))
+      .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    return parts.length ? parts.join('') : null
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return firstText(record.text ?? record.content ?? record.message ?? record.output ?? record.final)
+  }
+  return null
+}
+
 export function codexCommandLabel(command: unknown): string {
   const raw = String(command ?? '').replace(/\s+/g, ' ').trim()
   const quotedExe = raw.match(/^"([^"]+)"\s*(.*)$/)
@@ -92,7 +107,8 @@ export function parseCodexStreamJsonLine(line: string): ParsedActivity | null {
   }
 
   if (obj.type === 'item.completed' && item.type === 'agent_message') {
-    return typeof item.text === 'string' ? { content: item.text } : null
+    const content = firstText(item.text ?? item.message ?? item.content ?? item.output ?? item.final)
+    return typeof content === 'string' ? { content } : null
   }
 
   return null

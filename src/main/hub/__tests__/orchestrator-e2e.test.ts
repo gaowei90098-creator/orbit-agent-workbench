@@ -228,4 +228,19 @@ describe('runOrchestrate 端到端', () => {
     expect(errs.length === 1 || (finals.length === 1 && finals[0].content.length > 0)).toBe(true)
     if (errs.length) expect(task.status).toBe('failed')
   })
+
+  it('全部子任务失败 → 最终内容带失败前缀，不得呈现为交付物', async () => {
+    const { dispatcher, events } = makeDispatcher()
+    h.state.responder = ({ kind }) => {
+      if (kind === 'decompose') return PLAN
+      if (kind === 'verify') return 'PASS'
+      if (kind === 'synthesis') return '我在工作区发现了 index.html，已交付'  // 模拟 lead 仍想报交付物
+      return { error: 'boom' }  // 两个子任务都失败
+    }
+    const task = await dispatcher.dispatch('做个星云页面', 'orchestrate')
+    const final = byKind(events, 'orchestrate:final') as any[]
+    expect(final).toHaveLength(1)
+    expect(final[0].content).toContain('所有子任务均失败')
+    expect(task.results.get('orchestrate')).toContain('所有子任务均失败')
+  })
 })

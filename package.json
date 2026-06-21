@@ -1,17 +1,18 @@
 {
-  "name": "agenthub",
+  "name": "orbit-agent-workbench",
   "version": "0.5.3",
-  "description": "Orbit - 多 Agent 协同工作区",
+  "description": "Orbit - Agent Mission Control for handoff, collaboration, memory, and self-evolving software work",
   "main": "out/main/index.js",
   "author": {
-    "name": "AgentHub Team",
-    "email": "team@agenthub.dev"
+    "name": "gaowei90098-creator",
+    "email": "gaowei90098@gmail.com"
   },
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev --watch",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
+    "sync:runtime": "node scripts/sync-orbit-runtime.mjs",
+    "dev": "npm run sync:runtime && electron-vite dev --watch",
+    "build": "electron-vite build && npm run sync:runtime",
+    "preview": "npm run sync:runtime && electron-vite preview",
     "build:win": "npm run build && electron-builder --win --publish never",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -49,7 +50,7 @@
   "build": {
     "appId": "dev.agenthub.desktop",
     "productName": "Orbit",
-    "copyright": "Copyright (c) 2026 AgentHubTeam",
+    "copyright": "Copyright (c) 2026 gaowei90098-creator",
     "buildVersion": "0.5.3",
     "files": [
       "out/**/*",
@@ -75,7 +76,7 @@
     },
     "protocols": [
       {
-        "name": "AgentHub Protocol",
+        "name": "Orbit Protocol",
         "schemes": [
           "agenthub"
         ]
@@ -98,7 +99,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "publisherName": "AgentHubTeam",
+      "publisherName": "gaowei90098-creator",
       "verifyUpdateCodeSignature": false,
       "signAndEditExecutable": false,
       "requestedExecutionLevel": "asInvoker",
@@ -113,7 +114,7 @@
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": false,
-      "shortcutName": "AgentHub",
+      "shortcutName": "Orbit",
       "artifactName": "${productName}-Setup-${version}.${ext}",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
@@ -140,14 +141,14 @@
         }
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "build/icon.png",
+      "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "darkModeSupport": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSHumanReadableCopyright": "Copyright (c) 2026 AgentHubTeam. All rights reserved.",
+        "NSHumanReadableCopyright": "Copyright (c) 2026 gaowei90098-creator. All rights reserved.",
         "CFBundleURLSchemes": [
           "agenthub"
         ],
@@ -175,9 +176,9 @@
       ],
       "icon": "build/icon-linux.png",
       "category": "Development",
-      "vendor": "AgentHubTeam",
-      "maintainer": "AgentHubTeam <team@agenthub.dev>",
-      "description": "AgentHub - 多 Agent 协同桌面工作台",
+      "vendor": "gaowei90098-creator",
+      "maintainer": "gaowei90098-creator <gaowei90098@gmail.com>",
+      "description": "Orbit - 多 Agent 协同桌面工作台",
       "desktop": {
         "entry": {
           "Name": "Orbit",
@@ -193,10 +194,10 @@
     "asar": true,
     "afterPack": null
   },
-  "homepage": "https://agenthub.dev",
-  "bugs": "https://github.com/agenthub/agenthub/issues",
+  "homepage": "https://github.com/gaowei90098-creator/orbit-agent-workbench",
+  "bugs": "https://github.com/gaowei90098-creator/orbit-agent-workbench/issues",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agenthub/agenthub.git"
+    "url": "https://github.com/gaowei90098-creator/orbit-agent-workbench.git"
   }
 }

@@ -20,12 +20,14 @@ import { SettingsScreen, MotionLevel } from './screens/Settings'
 import { useLang, tr } from './glass/i18n'
 import { getBudget, getBudgetMode } from './glass/budget'
 import { applyOrchestrateEvent } from './glass/orchestrate-reducer'
+import { applyCollaborateEvent } from './glass/collaborate-reducer'
 import { upsertStep } from './glass/chat-transcript'
 import { SetupTab, summarizeAgentConnections } from './glass/connection-status'
 import { ApprovalDialog, ApprovalItem } from './glass/approval-dialog'
 import { OrbitAurora } from './glass/orbit-aurora'
 
 type AgentMap = Record<string, { status: AgentUIStatus }>
+type DispatchRunOptions = { rounds?: number; participants?: string[] }
 
 const asRecord = (v: any): Record<string, string> => {
   if (!v) return {}
@@ -96,6 +98,41 @@ const normalizeConversations = (state: any, fallbackWorkspaceId: string | null):
 const latestConversationForWorkspace = (items: ConversationItem[], workspaceId: string | null): ConversationItem | undefined =>
   items.filter(c => sameWorkspace(c.workspaceId, workspaceId)).sort((a, b) => b.updatedAt - a.updatedAt)[0]
 
+const INTRO_FADE_MS = 760
+
+function OrbitIntroSplash({ leaving, onDone }: { leaving: boolean; onDone: () => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  useEffect(() => {
+    const fallback = window.setTimeout(onDone, 8200)
+    const play = window.setTimeout(() => {
+      videoRef.current?.play().catch(() => {
+        window.setTimeout(onDone, 1100)
+      })
+    }, 80)
+    return () => {
+      window.clearTimeout(fallback)
+      window.clearTimeout(play)
+    }
+  }, [onDone])
+
+  return (
+    <div className={'orbit-intro' + (leaving ? ' leaving' : '')} aria-hidden="true">
+      <video
+        ref={videoRef}
+        className="orbit-intro-video"
+        src="media/orbit-intro.mp4"
+        autoPlay
+        muted
+        playsInline
+        preload="auto"
+        onEnded={onDone}
+        onError={onDone}
+      />
+    </div>
+  )
+}
+
 export default function App() {
   const [page, setPage] = useState<PageId>('home')
   const [search, setSearch] = useState('')
@@ -120,6 +157,9 @@ export default function App() {
   const [motion, setMotion] = useState<MotionLevel>(() => {
     try { return (localStorage.getItem('ah-motion') as MotionLevel) || 'rich' } catch { return 'rich' }
   })
+  const [introVisible, setIntroVisible] = useState(true)
+  const [introLeaving, setIntroLeaving] = useState(false)
+  const introDone = useRef(false)
 
   /* 流式派发簿记 */
   const taskToMsg = useRef<Map<string, string>>(new Map())
@@ -136,6 +176,7 @@ export default function App() {
   const memoryReady = useRef(false)
   const [runtimeReady, setRuntimeReady] = useState(false)
   const orchestrateTasks = useRef<Set<string>>(new Set())  // 编排模式任务 id（其内部 agent 事件不渲染气泡）
+  const collaborateTasks = useRef<Set<string>>(new Set())  // 协作模式任务 id（其内部 agent 事件由 collaborate:* 聚合）
 
   /* 动效档位 → html[data-motion] */
   useEffect(() => {
@@ -167,6 +208,13 @@ export default function App() {
 
   const updateTaskAcrossConversations = useCallback((updater: (tasks: TaskItem[]) => TaskItem[]) => {
     setConversations(prev => prev.map(conv => ({ ...conv, tasks: updater(conv.tasks), updatedAt: Date.now() })))
+  }, [])
+
+  const finishIntro = useCallback(() => {
+    if (introDone.current) return
+    introDone.current = true
+    setIntroLeaving(true)
+    window.setTimeout(() => setIntroVisible(false), INTRO_FADE_MS)
   }, [])
 
   const loadWorkspaces = useCallback(async () => {
@@ -313,7 +361,7 @@ export default function App() {
     const off = window.electronAPI?.hub?.onStream?.((e: any) => {
       const tid: string = e.taskId
       if (!tid || ignoredTasks.current.has(tid)) return
-      let conversationId = taskToConversation.current.get(tid) || pendingConversationId.current || currentConversationId.current || activeConversationId
+      const conversationId = taskToConversation.current.get(tid) || pendingConversationId.current || currentConversationId.current || activeConversationId
       if (conversationId && !taskToConversation.current.has(tid)) taskToConversation.current.set(tid, conversationId)
 
       // 写/执行审批请求：交给全局覆盖层弹窗，不依赖消息簿记（不入 msgId 流程）
@@ -333,6 +381,19 @@ export default function App() {
       if (!msgId || !conversationId || ignoredMsgs.current.has(msgId)) return
       const localId = localTaskId.current.get(tid) ?? tid
 
+      // 协作模式：collaborate:* 事件经 reducer 聚合到该消息的 collaboration；内部 agent 流不渲染普通气泡
+      if (typeof e.kind === 'string' && e.kind.startsWith('collaborate:')) {
+        collaborateTasks.current.add(tid)
+        updateConversationMessages(conversationId, ms => ms.map(m => m.id === msgId
+          ? { ...m, collaboration: applyCollaborateEvent(m.collaboration, e) } : m))
+        if (e.kind === 'collaborate:final' || e.kind === 'collaborate:error') {
+          setBusyOverride(o => ({ ...o }))
+          updateConversationTasks(conversationId, ts => ts.map(t => t.id === localId
+            ? { ...t, results: { ...(t.results || {}), collaborate: e.content || t.results?.collaborate || '' }, ...(e.error ? { errors: { ...(t.errors || {}), collaborate: e.error } } : {}) } : t))
+        }
+        return
+      }
+
       // 编排模式：orchestrate:* 事件经 reducer 聚合到该消息的 orchestration；标记该任务
       if (typeof e.kind === 'string' && e.kind.startsWith('orchestrate:')) {
         orchestrateTasks.current.add(tid)
@@ -345,8 +406,8 @@ export default function App() {
         }
         return
       }
-      // 编排任务的内部 agent 事件（lead 分解/子任务/汇总）不渲染为普通气泡
-      if (orchestrateTasks.current.has(tid)) return
+      // 编排/协作任务的内部 agent 事件不渲染为普通气泡
+      if (orchestrateTasks.current.has(tid) || collaborateTasks.current.has(tid)) return
 
       if (e.kind === 'start') {
         setBusyOverride(o => ({ ...o, [e.agentId]: 'busy' }))
@@ -408,13 +469,15 @@ export default function App() {
   }, [activeConversationId, updateConversationMessages, updateConversationTasks])
 
   /* ---------- 派发 ---------- */
-  const runDispatch = useCallback(async (conversationId: string, msgId: string, localId: string, text: string, mode: DispatchMode, targetAgent?: string, workspaceId?: string | null) => {
+  const runDispatch = useCallback(async (conversationId: string, msgId: string, localId: string, text: string, mode: DispatchMode, targetAgent?: string, workspaceId?: string | null, runOptions: DispatchRunOptions = {}) => {
     pendingMsgId.current = msgId
     pendingConversationId.current = conversationId
     try {
       const task = await window.electronAPI.hub.dispatch(text, mode, targetAgent || undefined, {
         workspaceId: workspaceId ?? null,
-        requirePlanApproval: mode === 'orchestrate' && !targetAgent
+        requirePlanApproval: mode === 'orchestrate' && !targetAgent,
+        rounds: runOptions.rounds,
+        participants: runOptions.participants
       })
       if (task?.id) {
         taskToMsg.current.set(task.id, msgId)
@@ -444,8 +507,9 @@ export default function App() {
     return fresh.id
   }, [activeConversationId, conversations])
 
-  const onSend = useCallback(async (text: string, mode: DispatchMode, targetAgent: string | null, workspaceId?: string | null) => {
+  const onSend = useCallback(async (text: string, mode: DispatchMode, targetAgent: string | null, workspaceId?: string | null, runOptions: DispatchRunOptions = {}) => {
     if (streaming) return
+    if (mode === 'chain' && !targetAgent) return
     // 预算软上限：本次会话用量（按 token 或估算费用口径）达上限时确认后才继续（A2/B1）
     const budget = getBudget()
     if (budget > 0) {
@@ -462,10 +526,8 @@ export default function App() {
     const msgId = 'm' + Date.now()
     const localId = 'local-' + Date.now()
     const gen = cancelGen.current
-    const isChain = !targetAgent && mode === 'chain'
     const preTargets = targetAgent ? [targetAgent]
       : mode === 'broadcast' ? bindings.map(b => b.agentId)
-      : isChain ? ['codex', 'claude']
       : [] // auto：由后端路由，start 事件补卡
 
     currentMsgId.current = msgId
@@ -509,26 +571,12 @@ export default function App() {
     }
 
     try {
-      if (isChain) {
-        const t1 = await runDispatch(conversationId, msgId, localId, text, 'auto', 'codex', targetWorkspaceId)
-        if (cancelGen.current !== gen) return // 已手动停止
-        const out = asRecord(t1?.results)['codex'] || ''
-        const firstFailed = t1?.status === 'failed' || !out
-        if (firstFailed) {
-          finalize('failed', t1?.error || asRecord(t1?.errors)['codex'] || '链式第一步无输出')
-          return
-        }
-        const t2 = await runDispatch(conversationId, msgId, localId, out, 'auto', 'claude', targetWorkspaceId)
-        if (cancelGen.current !== gen) return
-        finalize(t2?.status === 'failed' ? 'failed' : 'completed', t2?.error)
-      } else {
-        const task = await runDispatch(conversationId, msgId, localId, text, mode, targetAgent || undefined, targetWorkspaceId)
-        if (cancelGen.current !== gen) return
-        const errs = asRecord(task?.errors)
-        const status: TaskItem['status'] = task?.status === 'failed' ? 'failed'
-          : task?.status === 'cancelled' ? 'cancelled' : 'completed'
-        finalize(status, task?.error || (status === 'failed' ? Object.values(errs)[0] : undefined))
-      }
+      const task = await runDispatch(conversationId, msgId, localId, text, mode, targetAgent || undefined, targetWorkspaceId, runOptions)
+      if (cancelGen.current !== gen) return
+      const errs = asRecord(task?.errors)
+      const status: TaskItem['status'] = task?.status === 'failed' ? 'failed'
+        : task?.status === 'cancelled' ? 'cancelled' : 'completed'
+      finalize(status, task?.error || (status === 'failed' ? Object.values(errs)[0] : undefined))
     } catch (e: any) {
       if (cancelGen.current === gen) finalize('failed', e?.message || String(e))
     }
@@ -551,6 +599,8 @@ export default function App() {
       window.electronAPI.hub.cancel(tid).catch(() => {})
     }
     activeTaskIds.current.clear()
+    collaborateTasks.current.clear()
+    orchestrateTasks.current.clear()
     if (currentMsgId.current) {
       ignoredMsgs.current.add(currentMsgId.current)
     }
@@ -681,12 +731,57 @@ export default function App() {
     setPage('chat')
   }, [conversations])
 
+  const deleteConversation = useCallback((conversationId: string) => {
+    const target = conversations.find(c => c.id === conversationId)
+    if (!target) return
+    if (target.tasks.some(t => t.status === 'running')) {
+      window.alert(tr('这个对话还有运行中的任务，先停止任务后再删除。', 'This chat still has a running task. Stop it before deleting the chat.'))
+      return
+    }
+    const ok = window.confirm(tr('删除这个对话？消息和任务记录会从侧栏移除，但不会删除工作区文件。', 'Delete this chat? Messages and task history will be removed from the sidebar, but workspace files will stay.'))
+    if (!ok) return
+
+    const remaining = conversations.filter(c => c.id !== conversationId)
+    let nextConversations = remaining
+    let nextActiveConversationId = activeConversationId
+    let nextWorkspaceId = activeWorkspaceId
+    const activeStillExists = !!nextActiveConversationId && remaining.some(c => c.id === nextActiveConversationId)
+
+    if (activeConversationId === conversationId || !activeStillExists) {
+      const next = latestConversationForWorkspace(remaining, target.workspaceId)
+        ?? latestConversationForWorkspace(remaining, activeWorkspaceId)
+        ?? remaining[0]
+      if (next) {
+        nextActiveConversationId = next.id
+        nextWorkspaceId = next.workspaceId
+      } else {
+        const fresh = makeConversation(target.workspaceId ?? activeWorkspaceId ?? null)
+        nextConversations = [fresh]
+        nextActiveConversationId = fresh.id
+        nextWorkspaceId = fresh.workspaceId
+      }
+    }
+
+    taskToConversation.current.forEach((convId, taskId) => {
+      if (convId === conversationId) taskToConversation.current.delete(taskId)
+    })
+    if (currentConversationId.current === conversationId) currentConversationId.current = nextActiveConversationId
+    if (pendingConversationId.current === conversationId) pendingConversationId.current = null
+
+    setConversations(nextConversations)
+    setActiveConversationId(nextActiveConversationId)
+    setActiveWorkspaceId(nextWorkspaceId ?? null)
+    try { (window.electronAPI as any)?.workspaces?.setActive?.(nextWorkspaceId ?? null) } catch { /* noop */ }
+    setActiveAgent(null)
+    setPage('chat')
+  }, [activeConversationId, activeWorkspaceId, conversations])
+
   const lang = useLang() // 语言切换时整树重挂载（key），组件内 tr() 直接生效
 
   return (
     <>
       <div className="ah-backdrop"><OrbitAurora /></div>
-      <div key={lang} style={{ position: 'relative', zIndex: 1, height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div key={lang} className={'orbit-app-shell' + (introVisible ? ' orbit-app-shell-intro' : '')} style={{ position: 'relative', zIndex: 1, height: '100vh', display: 'flex', flexDirection: 'column' }}>
         <Titlebar search={search} onSearch={v => { setSearch(v); if (v && page !== 'tasks') setPage('tasks') }} hubRunning={hubRunning} />
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
           <Sidebar page={page} setPage={setPage} agents={agents}
@@ -696,7 +791,8 @@ export default function App() {
             conversations={conversations} activeConversationId={activeConversationId}
             onNewConversation={newConversation}
             onSelectWorkspace={selectWorkspace}
-            onSelectConversation={selectConversation} />
+            onSelectConversation={selectConversation}
+            onDeleteConversation={deleteConversation} />
           <div style={{ flex: 1, minWidth: 0, padding: '0 18px 14px 16px', overflowY: page === 'chat' ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column' }}>
             <Enter key={page} style={page === 'chat' ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : undefined}>
               {page === 'home' && <HomeScreen agents={agents} bindings={bindings} providers={providers} tasks={tasks} goChat={goChat}
@@ -718,6 +814,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      {introVisible && <OrbitIntroSplash leaving={introLeaving} onDone={finishIntro} />}
       <ApprovalDialog items={approvals} onDecide={onApprovalDecide} />
     </>
   )

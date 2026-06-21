@@ -47,8 +47,8 @@ export function statusLabel(s: AgentUIStatus): string {
 }
 
 const MODE_LABELS: Record<Lang, Record<string, string>> = {
-  zh: { auto: '智能路由', broadcast: '广播', chain: '链式', orchestrate: '编排' },
-  en: { auto: 'Auto route', broadcast: 'Broadcast', chain: 'Chain', orchestrate: 'Orchestrate' }
+  zh: { auto: '智能路由', broadcast: '广播', chain: '接力', orchestrate: '编排', collaborate: '协作' },
+  en: { auto: 'Auto route', broadcast: 'Broadcast', chain: 'Relay', orchestrate: 'Orchestrate', collaborate: 'Collaborate' }
 }
 
 export function modeLabel(m: string): string {
@@ -69,10 +69,7 @@ export function taskStatusLabel(s: TaskUIStatus): string {
 const AGENT_DESC_EN: Record<string, string> = {
   codex: 'Precise coding · debugging · refactors',
   claude: 'Analysis · writing · research',
-  hermes: 'Mobile notifications · remote requests · progress reports',
-  openclaw: 'Remote control · user notifications · approval relay',
-  marvis: 'Knowledge base · browser automation · cloud phone',
-  'minimax-code': 'Coding agent · OpenCode core'
+  hermes: 'Mobile notifications · remote requests · progress reports'
 }
 
 export function agentDesc(id: string, zhDesc: string): string {

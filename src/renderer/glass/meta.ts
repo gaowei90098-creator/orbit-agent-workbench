@@ -4,6 +4,7 @@
    ============================================================ */
 
 import type { OrchestrateState } from './orchestrate-view'
+import type { CollaborateState } from './collaborate-view'
 
 export interface AgentMeta {
   name: string
@@ -39,27 +40,12 @@ export const AGENT_META: Record<string, AgentMeta> = {
     name: 'Hermes', nameZh: '远程通报', icon: 'icons/hermes.png', tileLight: true,
     color: 'var(--ag-hermes)', colorRaw: '#aab4c4',
     caps: ['notify', 'remote', 'progress', 'approval'], desc: '手机通知 · 远程要求 · 进度通报'
-  },
-  openclaw: {
-    name: 'OpenClaw', nameZh: '远程通道', icon: 'icons/openclaw.png',
-    color: 'var(--ag-openclaw)', colorRaw: '#e04540',
-    caps: ['notify', 'remote', 'progress', 'approval'], desc: '远程操控 · 用户通知 · 确认回传'
-  },
-  marvis: {
-    name: 'Marvis', nameZh: '腾讯智能体', icon: 'icons/marvis.png', tileLight: true,
-    color: 'var(--ag-marvis)', colorRaw: '#4f8ef7',
-    caps: ['knowledge', 'browser', 'android', 'office'], desc: '知识库 · 浏览器自动化 · 云手机'
-  },
-  'minimax-code': {
-    name: 'MiniMax Code', nameZh: '编码智能体', icon: 'icons/minimax-code.png',
-    color: 'var(--ag-mmcode)', colorRaw: '#6db8f5',
-    caps: ['coding', 'agentic', 'tools', 'review'], desc: '编码 Agent · OpenCode 内核'
   }
 }
 
 export const MAIN_AGENT_ID = 'orbit'
-export const AGENT_IDS = ['codex', 'claude', 'hermes', 'openclaw', 'marvis', 'minimax-code']
-export const USER_BRIDGE_AGENT_IDS = ['hermes', 'openclaw']
+export const AGENT_IDS = ['codex', 'claude', 'hermes']
+export const USER_BRIDGE_AGENT_IDS = ['hermes']
 export const EXECUTION_AGENT_IDS = AGENT_IDS.filter(id => !USER_BRIDGE_AGENT_IDS.includes(id))
 export const NOTIFICATION_BRIDGE_STORAGE_KEY = 'orbit.notificationBridge'
 export const DEFAULT_NOTIFICATION_BRIDGE_AGENT_ID = 'hermes'
@@ -71,9 +57,9 @@ export const STATUS_ZH: Record<AgentUIStatus, string> = {
   idle: '空闲', busy: '运行中', error: '异常', off: '未启用'
 }
 
-export type DispatchMode = 'auto' | 'broadcast' | 'chain' | 'orchestrate'
+export type DispatchMode = 'auto' | 'broadcast' | 'chain' | 'orchestrate' | 'collaborate'
 
-export const MODE_ZH: Record<string, string> = { auto: '智能路由', broadcast: '广播', chain: '链式', orchestrate: '编排' }
+export const MODE_ZH: Record<string, string> = { auto: '智能路由', broadcast: '广播', chain: '接力', orchestrate: '编排', collaborate: '协作' }
 
 export type TaskUIStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -118,10 +104,7 @@ export interface BindingDef {
 export const DEFAULT_STDIO_ARGS: Record<string, string> = {
   codex: 'exec --json --sandbox danger-full-access --skip-git-repo-check -C . -',
   claude: '--print --verbose --output-format stream-json --permission-mode acceptEdits',
-  hermes: '（无参数，prompt 走 stdin）',
-  openclaw: 'crestodian --message {prompt}',
-  marvis: '（Marvis 暂无官方 CLI，建议用 HTTP 绑定）',
-  'minimax-code': 'run {prompt}'
+  hermes: '（无参数，prompt 走 stdin）'
 }
 
 export interface TokenUsage { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; modelId?: string }
@@ -248,6 +231,8 @@ export interface ChatMessage {
   replies: ReplyState[]
   /** 编排模式：由 orchestrate:* 事件经 reducer 聚合 */
   orchestration?: OrchestrateState
+  /** 协作模式：由 collaborate:* 事件经 reducer 聚合 */
+  collaboration?: CollaborateState
 }
 
 export interface WorkspaceItem {

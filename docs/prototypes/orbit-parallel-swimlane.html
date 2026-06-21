@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="zh" data-motion="rich">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbit · 编排执行并行泳道原型</title>
+  <style>
+    :root {
+      --bg-0: #091016;
+      --bg-1: #101821;
+      --bg-2: #14212b;
+      --glass-bg: rgba(17, 25, 34, 0.74);
+      --glass-bg-strong: rgba(21, 31, 42, 0.88);
+      --glass-border: rgba(170, 194, 220, 0.13);
+      --glass-border-strong: rgba(205, 225, 248, 0.24);
+      --shadow-panel: 0 18px 46px -30px rgba(0, 0, 0, 0.86), inset 0 1px 0 rgba(255,255,255,0.045);
+      --tx-1: rgba(244, 247, 250, 0.96);
+      --tx-2: rgba(218, 228, 238, 0.66);
+      --tx-3: rgba(210, 220, 232, 0.42);
+      --mint: #58d995;
+      --mint-soft: rgba(88, 217, 149, 0.15);
+      --mint-line: rgba(88, 217, 149, 0.42);
+      --cyan: #5aa7f0;
+      --violet: #a78bfa;
+      --amber: #e8b34d;
+      --error: #e8706a;
+      --codex: #7b87fa;
+      --claude: #d97757;
+      --bridge: #aab4c4;
+      --font-ui: -apple-system, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--tx-1);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      background: var(--bg-0);
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(ellipse at 18% 0%, rgba(101, 214, 255, 0.16), transparent 42%),
+        radial-gradient(ellipse at 82% 12%, rgba(167, 139, 250, 0.14), transparent 42%),
+        linear-gradient(160deg, #13242c 0%, var(--bg-1) 45%, var(--bg-0) 100%);
+    }
+    .backdrop::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(7, 11, 16, 0.02), rgba(7, 11, 16, 0.72)),
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.028) 0 1px, transparent 1px 4px);
+      opacity: 0.54;
+    }
+    .backdrop::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(7, 11, 16, 0.62), transparent 28%, transparent 68%, rgba(7, 11, 16, 0.42));
+      opacity: 0.74;
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 36px));
+      margin: 28px auto;
+      display: grid;
+      gap: 14px;
+    }
+
+    .window-bar {
+      min-height: 50px;
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(22, 34, 45, 0.94), rgba(11, 18, 26, 0.9)),
+        linear-gradient(90deg, rgba(88,217,149,0.08), rgba(90,167,240,0.08));
+      box-shadow: var(--shadow-panel);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+    }
+    .mac-dots {
+      display: flex;
+      gap: 8px;
+    }
+    .mac-dots i {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      display: block;
+    }
+    .mac-dots i:nth-child(1) { background: #e8706a; }
+    .mac-dots i:nth-child(2) { background: #e8b34d; }
+    .mac-dots i:nth-child(3) { background: #58d995; }
+    .window-title {
+      font-weight: 720;
+      letter-spacing: 0;
+      color: var(--tx-1);
+    }
+    .window-sub {
+      color: var(--tx-3);
+      font-size: 12px;
+    }
+    .live {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--mint);
+      font-size: 12.5px;
+    }
+    .live i {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--mint);
+      box-shadow: 0 0 0 5px rgba(88,217,149,0.08);
+      animation: blink 1.6s ease-in-out infinite;
+    }
+
+    .stage {
+      border: 1px solid rgba(88,217,149,0.18);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(22, 34, 45, 0.92), rgba(14, 22, 31, 0.86)),
+        repeating-linear-gradient(90deg, transparent 0 28px, rgba(88,217,149,0.04) 28px 29px);
+      box-shadow: var(--shadow-panel);
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    .spotlight {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+    }
+    .spotlight::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: 0;
+      background: radial-gradient(260px circle at var(--rb-x, 50%) var(--rb-y, 50%), var(--rb-spotlight, rgba(88,217,149,0.14)), transparent 58%);
+      transition: opacity 0.18s ease;
+      pointer-events: none;
+    }
+    .spotlight:hover::before { opacity: 1; }
+
+    .top-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .fanout {
+      min-height: 78px;
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.18);
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 14px;
+      --rb-spotlight: rgba(88,217,149,0.14);
+    }
+    .orbit-core {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 65% 34%, rgba(255,255,255,0.28), transparent 22%),
+        linear-gradient(145deg, rgba(139,145,232,0.36), rgba(88,217,149,0.18));
+      border: 1px solid rgba(205,225,248,0.24);
+      display: grid;
+      place-items: center;
+      color: var(--tx-1);
+      font-weight: 800;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+      animation: pulse 2.6s ease-in-out infinite;
+    }
+    .fanout-title {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-weight: 760;
+    }
+    .fanout small,
+    .summary small,
+    .merge small {
+      color: var(--tx-2);
+      font-size: 12.5px;
+    }
+    .fanout-path {
+      min-width: 190px;
+      display: grid;
+      gap: 7px;
+      color: var(--tx-3);
+      font-size: 11.5px;
+    }
+    .path-line {
+      height: 6px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.06);
+    }
+    .path-line i {
+      display: block;
+      width: 45%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--mint), var(--cyan), var(--violet));
+      animation: dispatch 2.8s ease-in-out infinite;
+    }
+
+    .summary {
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.16);
+      min-width: 210px;
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      --rb-spotlight: rgba(90,167,240,0.14);
+    }
+    .summary b {
+      color: var(--mint);
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    .summary-meter {
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      overflow: hidden;
+    }
+    .summary-meter i {
+      display: block;
+      width: 50%;
+      height: 100%;
+      background: var(--mint);
+    }
+
+    .lanes-shell {
+      margin-top: 12px;
+      position: relative;
+    }
+    .lanes {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(330px, 1fr));
+      gap: 12px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scrollbar-color: rgba(170,194,220,0.25) transparent;
+    }
+    .lane {
+      min-width: 330px;
+      border: 1px solid color-mix(in srgb, var(--agent) 28%, var(--glass-border));
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(18, 27, 37, 0.88), rgba(13, 20, 29, 0.84)),
+        repeating-linear-gradient(0deg, transparent 0 42px, rgba(170,194,220,0.035) 42px 43px);
+      padding: 13px;
+      display: grid;
+      gap: 11px;
+      --rb-spotlight: color-mix(in srgb, var(--agent) 18%, transparent);
+    }
+    .lane-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .agent-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: var(--tx-1);
+      font-weight: 760;
+      background: color-mix(in srgb, var(--agent) 18%, rgba(255,255,255,0.04));
+      border: 1px solid color-mix(in srgb, var(--agent) 40%, transparent);
+    }
+    .lane-name {
+      min-width: 0;
+    }
+    .lane-name b {
+      display: block;
+      font-size: 13.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lane-name span {
+      display: block;
+      margin-top: 1px;
+      color: var(--tx-3);
+      font-size: 11.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid color-mix(in srgb, var(--agent) 32%, transparent);
+      background: color-mix(in srgb, var(--agent) 13%, transparent);
+      color: color-mix(in srgb, var(--agent) 76%, white);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11.5px;
+      white-space: nowrap;
+    }
+    .pill.error {
+      color: var(--error);
+      border-color: rgba(232,112,106,0.25);
+      background: rgba(232,112,106,0.09);
+    }
+    .spin {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      border: 1.5px solid currentColor;
+      border-top-color: transparent;
+      animation: spin 0.8s linear infinite;
+    }
+    .check, .warn {
+      width: 12px;
+      height: 12px;
+      display: inline-grid;
+      place-items: center;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .progress {
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      overflow: hidden;
+    }
+    .progress i {
+      display: block;
+      height: 100%;
+      width: var(--fill, 74%);
+      border-radius: inherit;
+      background: linear-gradient(90deg, color-mix(in srgb, var(--agent) 60%, transparent), var(--agent));
+      animation: fillb var(--speed, 3.2s) ease-in-out infinite;
+    }
+    .lane.done .progress i {
+      width: 100%;
+      animation: none;
+    }
+    .lane.error .progress i {
+      width: 100%;
+      animation: none;
+      background: linear-gradient(90deg, rgba(232,112,106,0.36), var(--error));
+    }
+
+    .contract {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip {
+      min-width: 0;
+      max-width: 100%;
+      border: 1px solid rgba(170,194,220,0.1);
+      border-radius: 7px;
+      background: rgba(255,255,255,0.045);
+      color: var(--tx-2);
+      font-size: 11px;
+      padding: 4px 7px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chip.scope {
+      border-color: color-mix(in srgb, var(--agent) 28%, transparent);
+      color: color-mix(in srgb, var(--agent) 70%, white);
+    }
+    .task-copy {
+      color: var(--tx-2);
+      font-size: 12.5px;
+      min-height: 38px;
+    }
+    .task-copy b {
+      color: var(--tx-1);
+    }
+    .log {
+      min-height: 92px;
+      border: 1px solid rgba(170,194,220,0.08);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.18);
+      padding: 9px 10px;
+      color: var(--tx-2);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.82;
+      overflow: hidden;
+    }
+    .log span {
+      display: block;
+      opacity: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      animation: ln 5.2s linear infinite;
+    }
+    .log span:nth-child(2) { animation-delay: 1.1s; }
+    .log span:nth-child(3) { animation-delay: 2.2s; }
+    .log span:nth-child(4) { animation-delay: 3.3s; }
+    .lane.error .log span,
+    .lane.done .log span {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+
+    .lane-foot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--tx-3);
+      font-size: 11.5px;
+    }
+    .lane-foot i {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--agent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent) 12%, transparent);
+    }
+
+    .merge-grid {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 0.38fr);
+      gap: 12px;
+    }
+    .merge,
+    .bridge {
+      border: 1px solid rgba(88,217,149,0.22);
+      border-radius: 8px;
+      background: rgba(88,217,149,0.08);
+      padding: 12px 13px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      --rb-spotlight: rgba(88,217,149,0.13);
+    }
+    .merge-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: var(--mint);
+      background: rgba(88,217,149,0.12);
+      border: 1px solid rgba(88,217,149,0.23);
+      flex: none;
+    }
+    .merge-copy {
+      min-width: 0;
+    }
+    .merge b {
+      display: block;
+      font-size: 13.5px;
+      margin-bottom: 2px;
+    }
+    .bridge {
+      border-color: rgba(170,194,220,0.12);
+      background: rgba(170,194,220,0.055);
+      color: var(--tx-2);
+      --rb-spotlight: rgba(170,194,220,0.11);
+    }
+    .bridge .merge-icon {
+      color: var(--bridge);
+      background: rgba(170,194,220,0.08);
+      border-color: rgba(170,194,220,0.14);
+    }
+
+    .review-note {
+      margin-top: 12px;
+      border: 1px solid rgba(232,112,106,0.18);
+      border-radius: 8px;
+      background: rgba(232,112,106,0.07);
+      padding: 10px 12px;
+      color: color-mix(in srgb, var(--error) 78%, white);
+      font-size: 12.5px;
+    }
+
+    @media (max-width: 860px) {
+      .shell { width: min(100vw - 24px, 1180px); margin-block: 18px; }
+      .top-row, .merge-grid { grid-template-columns: 1fr; }
+      .fanout { grid-template-columns: auto minmax(0, 1fr); }
+      .fanout-path { grid-column: 1 / -1; min-width: 0; }
+      .lanes { grid-template-columns: repeat(2, minmax(300px, 86vw)); }
+      .window-sub { display: none; }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.32; }
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes dispatch {
+      0% { transform: translateX(-115%); }
+      54% { transform: translateX(65%); }
+      100% { transform: translateX(155%); }
+    }
+    @keyframes fillb {
+      0% { width: 14%; }
+      55% { width: 76%; }
+      100% { width: 93%; }
+    }
+    @keyframes ln {
+      0%, 7% { opacity: 0; transform: translateX(-4px); }
+      15%, 82% { opacity: 1; transform: none; }
+      100% { opacity: 0.18; }
+    }
+
+    [data-motion="off"] *,
+    [data-motion="off"] *::before,
+    [data-motion="off"] *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop"></div>
+  <main class="shell">
+    <div class="window-bar">
+      <span class="mac-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="window-title">Orbit</span>
+      <span class="window-sub">多智能体工作台</span>
+      <span class="live"><i></i>Hub 运行中 · 编排 2 路并行</span>
+    </div>
+
+    <section class="stage">
+      <div class="top-row">
+        <div class="fanout spotlight">
+          <div class="orbit-core">O</div>
+          <div>
+            <div class="fanout-title">
+              <span>总控 Orbit</span>
+              <small>fan-out 派发 · 共享上下文 · 统一验收标准</small>
+            </div>
+            <small>目标拆成可独立验证的任务合约；Codex 与 Claude 同步开跑，结果再回到 Orbit 合成。</small>
+          </div>
+          <div class="fanout-path">
+            <span>实时派发流</span>
+            <span class="path-line"><i></i></span>
+          </div>
+        </div>
+
+        <div class="summary spotlight">
+          <small>执行进度</small>
+          <b>1 / 2 完成</b>
+          <div class="summary-meter"><i></i></div>
+          <small>1 条需复核后再进入最终合成</small>
+        </div>
+      </div>
+
+      <div class="lanes-shell">
+        <div class="lanes">
+          <article class="lane error spotlight" style="--agent: var(--codex); --speed: 3.9s">
+            <div class="lane-head">
+              <div class="agent-mark">Cx</div>
+              <div class="lane-name">
+                <b>Codex CLI</b>
+                <span>debate/codex_negative.md · gpt</span>
+              </div>
+              <span class="pill error"><span class="warn">×</span>校验未过</span>
+            </div>
+            <div class="progress"><i></i></div>
+            <div class="contract">
+              <span class="chip scope">范围: debate/codex_negative.md</span>
+              <span class="chip">验收: 反方立论 / 核心论点 / 交叉质询</span>
+            </div>
+            <p class="task-copy"><b>反方立论:</b> 已产出草稿，但 RESULT 为空，缺少可交付正文证据。Orbit 保留上下文，下一轮只重跑失败合约。</p>
+            <div class="log">
+              <span>$ 读取共享 contract v1</span>
+              <span>$ 写入 codex_negative.md</span>
+              <span>× RESULT 为空 · 未产出辩论稿</span>
+              <span>! 等待 Orbit 生成修复提示</span>
+            </div>
+            <div class="lane-foot"><i></i>独立轨道已停止，不阻塞 Claude 产物入库</div>
+          </article>
+
+          <article class="lane done spotlight" style="--agent: var(--claude); --speed: 4.7s">
+            <div class="lane-head">
+              <div class="agent-mark">Cl</div>
+              <div class="lane-name">
+                <b>Claude Code</b>
+                <span>debate/claude_affirmative.md · opus</span>
+              </div>
+              <span class="pill"><span class="check">✓</span>已完成</span>
+            </div>
+            <div class="progress"><i></i></div>
+            <div class="contract">
+              <span class="chip scope">范围: debate/claude_affirmative.md</span>
+              <span class="chip">验收: 正方立论 / 反驳预测 / 总结陈词</span>
+            </div>
+            <p class="task-copy"><b>正方立论:</b> 文件结构通过，含 4 个核心论点与 2 个交叉质询问题，可进入最终合成输入池。</p>
+            <div class="log">
+              <span>$ 起草正方开篇</span>
+              <span>$ 补齐医疗 / 教育 / 科技论据</span>
+              <span>✓ 校验通过 · 118 行</span>
+              <span>✓ 合成输入已登记</span>
+            </div>
+            <div class="lane-foot"><i></i>产物已锁定，等待 Codex 修复后 fan-in</div>
+          </article>
+        </div>
+      </div>
+
+      <div class="merge-grid">
+        <div class="merge spotlight">
+          <div class="merge-icon">↓</div>
+          <div class="merge-copy">
+            <b>Orbit fan-in 合成</b>
+            <small>合成节点只接收通过验收的产物；失败轨道以复核任务返回，不伪装成完成。</small>
+          </div>
+        </div>
+        <div class="bridge spotlight">
+          <div class="merge-icon">H</div>
+          <div class="merge-copy">
+            <b>Hermes 远程通报</b>
+            <small>只承担进度通知与确认回传，不进入执行 worker 池。</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="review-note">
+        当前原型保留失败态、多 Agent 横向滚动和 motion-off 开关；真正集成时进度条只表达状态节奏，不伪造精确百分比。
+      </div>
+    </section>
+  </main>
+  <script>
+    document.querySelectorAll('.spotlight').forEach((node) => {
+      node.addEventListener('mousemove', (event) => {
+        const rect = node.getBoundingClientRect();
+        node.style.setProperty('--rb-x', `${event.clientX - rect.left}px`);
+        node.style.setProperty('--rb-y', `${event.clientY - rect.top}px`);
+      });
+    });
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
    所有修改即时调 providers:* / routing:setBinding 并刷新 hub:status
    ============================================================ */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Icon, IC, AgentMark, Enter, Seg, SectionTitle, Switch } from '../glass/ui'
 import {
   AGENT_META,
@@ -115,10 +115,7 @@ function SetupNextStep({ summary, onTab, goChat }: {
 const AGENT_SITES: Array<{ id: string; site: string; install?: string; note?: { zh: string; en: string } }> = [
   { id: 'codex', site: 'https://openai.com/codex', install: 'npm install -g @openai/codex' },
   { id: 'claude', site: 'https://claude.com/claude-code', install: 'npm install -g @anthropic-ai/claude-code' },
-  { id: 'hermes', site: 'https://nousresearch.com', note: { zh: 'Hermes Agent 发行方官网，以官方发布渠道为准', en: 'Publisher site — follow official release channels' } },
-  { id: 'openclaw', site: 'https://openclaw.ai', note: { zh: '文档见 docs.openclaw.ai', en: 'Docs at docs.openclaw.ai' } },
-  { id: 'marvis', site: 'https://sj.qq.com', note: { zh: '腾讯应用宝搜索「Marvis」获取桌面版', en: 'Search "Marvis" on Tencent App Store for the desktop build' } },
-  { id: 'minimax-code', site: 'https://platform.minimaxi.com', note: { zh: 'MiniMax 开放平台（国际版 platform.minimax.io）', en: 'MiniMax platform (intl: platform.minimax.io)' } }
+  { id: 'hermes', site: 'https://nousresearch.com', note: { zh: 'Hermes Agent 发行方官网，以官方发布渠道为准', en: 'Publisher site — follow official release channels' } }
 ]
 
 function AgentSitesTab() {
@@ -406,8 +403,8 @@ function ProvidersTab({ providers, onSetEnabled, onSetKey, onReload, onUpsert, o
               onChange={e => setDraft(d => ({ ...d, modelId: e.target.value }))} />
           </div>
           <div>
-            <div className="ah-label" style={{ marginBottom: 5 }}>Base URL</div>
-            <input className="ah-input mono" value={draft.baseUrl} placeholder="https://api.example.com/v1"
+            <div className="ah-label" style={{ marginBottom: 5 }}>{tr('Base URL / 完整接口地址', 'Base URL / full endpoint')}</div>
+            <input className="ah-input mono" value={draft.baseUrl} placeholder="https://api.example.com/v1 或 https://api.example.com/v1/chat/completions"
               onChange={e => setDraft(d => ({ ...d, baseUrl: e.target.value }))} />
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -465,6 +462,7 @@ function RoutingTab({ providers, bindings, onSetBinding, onTab }: {
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <EvoMapMcpCard />
       <NotificationBridgeSelector />
       <AgenticEnableBanner bindings={bindings} located={located} onSetBinding={onSetBinding} onTab={onTab} />
       <div className="ah-hint" style={{ padding: '0 4px' }}>
@@ -476,6 +474,188 @@ function RoutingTab({ providers, bindings, onSetBinding, onTab }: {
       </Enter>)}
     </div>
   )
+}
+
+type EvoMapStatus = {
+  connected?: boolean
+  reason?: string
+  tokenSource?: string
+  tokenError?: string
+  lastError?: { stage?: string; message?: string; at?: number } | null
+  pendingCount?: number
+  clientId?: string
+  mcpEndpoint?: string
+  authorizationEndpoint?: string
+  scopes?: string
+  expiresAt?: number
+  authorizeUrl?: string
+}
+
+type EvoMapProbe = {
+  ok?: boolean
+  status?: string
+  summary?: string
+  toolCount?: number
+  itemCount?: number
+  reason?: string
+}
+
+const EVOMAP_LOCAL = 'http://127.0.0.1:9527'
+
+function EvoMapMcpCard() {
+  const [status, setStatus] = useState<EvoMapStatus | null>(null)
+  const [probe, setProbe] = useState<EvoMapProbe | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [probing, setProbing] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`${EVOMAP_LOCAL}/oauth/evomap/status`, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setStatus(await res.json())
+    } catch (e: any) {
+      setStatus(null)
+      setError(e?.message || tr('无法读取 EvoMap 状态', 'Unable to read EvoMap status'))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    const timer = window.setInterval(refresh, 15000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+
+  const openConnect = () => {
+    const url = status?.authorizeUrl || `${EVOMAP_LOCAL}/oauth/evomap/start`
+    const opened = window.electronAPI?.app?.openExternal?.(url)
+    if (opened && typeof opened.catch === 'function') opened.catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  const openDocs = () => {
+    const url = 'https://evomap.ai/learn/connect-ai-agent'
+    const opened = window.electronAPI?.app?.openExternal?.(url)
+    if (opened && typeof opened.catch === 'function') opened.catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  const runProbe = async () => {
+    setProbing(true)
+    setProbe(null)
+    setError('')
+    try {
+      const q = encodeURIComponent('Orbit multi-agent orchestration EvoMap MCP')
+      const res = await fetch(`${EVOMAP_LOCAL}/oauth/evomap/probe?q=${q}`, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setProbe(await res.json())
+      await refresh()
+    } catch (e: any) {
+      setError(e?.message || tr('检测失败', 'Probe failed'))
+    } finally {
+      setProbing(false)
+    }
+  }
+
+  const resetOAuth = async () => {
+    const ok = window.confirm(tr('清除本机 EvoMap 授权状态和缓存，然后重新授权？', 'Clear local EvoMap auth state and cache, then reconnect?'))
+    if (!ok) return
+    setResetting(true)
+    setError('')
+    try {
+      const res = await fetch(`${EVOMAP_LOCAL}/oauth/evomap/reset`, { method: 'POST', cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setProbe(null)
+      await refresh()
+    } catch (e: any) {
+      setError(e?.message || tr('重置失败', 'Reset failed'))
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  const connected = !!status?.connected
+  const expires = status?.expiresAt && status.expiresAt > Date.now()
+    ? new Date(status.expiresAt).toLocaleString()
+    : ''
+  const reason = evoMapReasonText(status)
+  const lastErrorText = status?.lastError?.message
+    ? `${status.lastError.stage || 'oauth'}: ${status.lastError.message}`
+    : ''
+
+  return (
+    <Enter className="glass" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 13, flexWrap: 'wrap', borderColor: connected ? 'color-mix(in srgb, var(--mint) 34%, var(--glass-border))' : 'color-mix(in srgb, var(--st-busy) 28%, var(--glass-border))' }}>
+      <div style={{ width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: connected ? 'var(--mint-soft)' : 'rgba(232,179,77,0.12)', color: connected ? 'var(--mint)' : 'var(--st-busy)', flex: 'none' }}>
+        <Icon d={connected ? IC.check : IC.link} size={16} />
+      </div>
+      <div style={{ flex: 1, minWidth: 260 }}>
+        <div style={{ fontWeight: 700 }}>{tr('EvoMap 自净化 MCP', 'EvoMap Self-Evolution MCP')}</div>
+        <div className="ah-hint" style={{ lineHeight: 1.55 }}>
+          {connected
+            ? tr(`已连接 · ${status?.scopes || 'gene:read recipe:read reuse:query'}${expires ? ` · 到期 ${expires}` : ''}`, `Connected · ${status?.scopes || 'gene:read recipe:read reuse:query'}${expires ? ` · expires ${expires}` : ''}`)
+            : reason}
+          {status?.pendingCount ? tr(` · ${status.pendingCount} 个授权回调等待中`, ` · ${status.pendingCount} pending callback(s)`) : ''}
+        </div>
+        <div className="ah-hint" style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+          {status?.mcpEndpoint || 'https://evomap.ai/mcp'} · {status?.tokenSource || 'none'}
+        </div>
+        {lastErrorText && (
+          <div className="ah-hint" style={{ marginTop: 6, lineHeight: 1.5, color: 'var(--st-error)' }}>
+            {lastErrorText}
+          </div>
+        )}
+        {status?.tokenError && (
+          <div className="ah-hint" style={{ marginTop: 6, lineHeight: 1.5, color: 'var(--st-error)' }}>
+            {status.tokenError}
+          </div>
+        )}
+        {probe && (
+          <div className="ah-hint" style={{ marginTop: 6, lineHeight: 1.5, color: probe.ok ? 'var(--mint)' : 'var(--tx-3)' }}>
+            {probe.ok
+              ? tr(`检测通过：${probe.summary || '已取得可用经验'} · ${probe.itemCount || 0} 项`, `Probe passed: ${probe.summary || 'usable context received'} · ${probe.itemCount || 0} items`)
+              : tr(`检测结果：${probe.summary || probe.reason || probe.status || '未取得可用结果'}`, `Probe result: ${probe.summary || probe.reason || probe.status || 'no usable result'}`)}
+          </div>
+        )}
+        {error && <div className="ah-hint" style={{ marginTop: 6, color: 'var(--st-error)' }}>{error}</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button className="ah-btn sm" onClick={refresh} disabled={loading}>
+          <Icon d={IC.refresh} size={13} /> {loading ? tr('刷新中', 'Refreshing') : tr('刷新', 'Refresh')}
+        </button>
+        <button className="ah-btn sm" onClick={runProbe} disabled={probing}>
+          <Icon d={IC.pulse} size={13} /> {probing ? tr('检测中', 'Probing') : tr('检测 MCP', 'Probe MCP')}
+        </button>
+        <button className="ah-btn sm" onClick={openDocs}>
+          <Icon d={IC.link} size={13} /> {tr('EvoMap 文档', 'EvoMap docs')}
+        </button>
+        <button className="ah-btn sm danger" onClick={resetOAuth} disabled={resetting}>
+          <Icon d={IC.x} size={13} /> {resetting ? tr('重置中', 'Resetting') : tr('重置授权', 'Reset auth')}
+        </button>
+        <button className="ah-btn sm primary" onClick={openConnect}>
+          <Icon d={IC.link} size={13} /> {connected ? tr('重新授权', 'Reconnect') : tr('连接 EvoMap', 'Connect EvoMap')}
+        </button>
+      </div>
+    </Enter>
+  )
+}
+
+function evoMapReasonText(status: EvoMapStatus | null): string {
+  const reason = status?.reason || ''
+  if (reason === 'token_unreadable') {
+    return tr('本机旧 token 无法解密；请重置授权后重新连接。', 'Stored token cannot be decrypted on this Mac build; reset auth and reconnect.')
+  }
+  if (reason === 'expired') {
+    return tr('授权已过期；请重新连接 EvoMap。', 'Authorization expired; reconnect EvoMap.')
+  }
+  if (reason === 'empty_token') {
+    return tr('授权记录不完整；请重置授权后重新连接。', 'Authorization record is incomplete; reset auth and reconnect.')
+  }
+  return tr('未授权；主 Agent 会继续本地规划，但不会注入 EvoMap Gene / Capsule / Recipe。', 'Not authorized; the main Agent will continue local planning without EvoMap Gene / Capsule / Recipe context.')
 }
 
 function NotificationBridgeSelector() {
@@ -504,8 +684,8 @@ function NotificationBridgeSelector() {
       <div style={{ flex: 1, minWidth: 260 }}>
         <div style={{ fontWeight: 700 }}>{tr('用户通报通道', 'User progress bridge')}</div>
         <div className="ah-hint" style={{ lineHeight: 1.55 }}>
-          {tr('Hermes / OpenClaw 只负责通知用户、接收远程要求和确认回传；Orbit 的执行计划不会把代码、部署或数据库写入任务派给它们。',
-              'Hermes / OpenClaw only notify the user, receive remote requests, and relay approvals; Orbit will not assign code, deploy, or database work to them.')}
+          {tr('Hermes 只负责通知用户、接收远程要求和确认回传；Orbit 的执行计划不会把代码、部署或数据库写入任务派给它。',
+              'Hermes only notifies the user, receives remote requests, and relays approvals; Orbit will not assign code, deploy, or database work to it.')}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -604,7 +784,7 @@ function BindingRow({ b, providers, patch, candidates }: {
   const meta = AGENT_META[b.agentId]
   const prov = providers.find(p => p.id === b.providerId)
   const stdioSupported = b.agentId !== MAIN_AGENT_ID && b.agentId in AGENT_META
-  const acpSupported = ['hermes', 'openclaw', 'minimax-code'].includes(b.agentId)
+  const acpSupported = ['hermes'].includes(b.agentId)
   const isStdio = b.protocol === 'stdio-plain'
   const isAcp = b.protocol === 'acp'
   const [binary, setBinary] = useState<string | null>(null)
@@ -943,6 +1123,9 @@ function ProxyTab({ providers, fallbackChain, onSetFallback }: {
   const [tkModel, setTkModel] = useState<Record<string, string>>({})
   const [tkBusy, setTkBusy] = useState<string | null>(null)
   const [tkErr, setTkErr] = useState<string | null>(null)
+  const [outProxy, setOutProxy] = useState('')
+  const [outProxyInput, setOutProxyInput] = useState('')
+  const [outProxySaved, setOutProxySaved] = useState(false)
 
   const loadTk = () => { window.electronAPI?.takeover?.status().then(setTk).catch(() => {}) }
   useEffect(() => {
@@ -952,7 +1135,16 @@ function ProxyTab({ providers, fallbackChain, onSetFallback }: {
       running: i.running
     })).catch(() => {})
     loadTk()
+    window.electronAPI?.network?.getProxy?.().then(v => { setOutProxy(v || ''); setOutProxyInput(v || '') }).catch(() => {})
   }, [])
+
+  const saveOutProxy = async () => {
+    try {
+      const saved = (await window.electronAPI?.network?.setProxy?.(outProxyInput.trim())) ?? ''
+      setOutProxy(saved); setOutProxyInput(saved)
+      setOutProxySaved(true); setTimeout(() => setOutProxySaved(false), 1400)
+    } catch { /* noop */ }
+  }
   const openaiUrl = info?.openaiUrl ?? 'http://127.0.0.1:9528/v1'
   const anthropicUrl = info?.anthropicUrl ?? 'http://127.0.0.1:9528'
 
@@ -990,6 +1182,24 @@ function ProxyTab({ providers, fallbackChain, onSetFallback }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 860 }}>
+      {/* 出站代理 */}
+      <Enter className="glass" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className={'ah-dot ' + (outProxy ? 'idle' : 'off')}></span>
+          <div style={{ fontWeight: 700 }}>{tr('出站代理', 'Outbound proxy')}</div>
+          <span className="ah-hint">{tr('Orbit 访问 Provider / 健康检查时经此代理。被墙或代理用 fake-ip 时必填（如 Shadowrocket/Clash 的本地端口）。留空 = 直连。', 'Orbit routes provider requests through this proxy. Required when the provider is blocked or your proxy uses fake-ip (e.g. Shadowrocket/Clash local port). Empty = direct.')}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input className="ah-input mono" style={{ flex: 1 }} placeholder="127.0.0.1:1082"
+            value={outProxyInput} onChange={e => setOutProxyInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') saveOutProxy() }} />
+          <button className="ah-btn sm primary" style={{ flex: 'none' }} onClick={saveOutProxy}>
+            {outProxySaved ? tr('已保存', 'Saved') : tr('保存', 'Save')}
+          </button>
+        </div>
+        <div className="ah-hint">{tr('支持 host:port、http://host:port、socks5://host:port；保存后立即生效，无需重启。', 'Accepts host:port, http://host:port, or socks5://host:port. Applies immediately, no restart needed.')}</div>
+      </Enter>
+
       {/* 接入地址 */}
       <Enter className="glass" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1046,12 +1256,12 @@ function ProxyTab({ providers, fallbackChain, onSetFallback }: {
           <div style={{ fontWeight: 700 }}>{tr('桌面 Agent 接管', 'Desktop agent takeover')}</div>
           <span className="ah-hint">{tr('改写应用 live 配置指向本地代理；之后换模型只需点「更新」，立刻生效', 'Rewrites the app\'s live config to point at the local proxy; switching models later is just "Update"')}</span>
         </div>
-        {(['codex', 'claude', 'hermes', 'openclaw'] as const).map(app => {
+        {(['codex', 'claude', 'hermes'] as const).map(app => {
           const s = tk[app]
           const meta = AGENT_META[app]
           const cfgLabel = {
             codex: '~/.codex/config.toml', claude: '~/.claude/settings.json',
-            hermes: '~/.hermes/config.yaml', openclaw: '~/.openclaw/openclaw.json'
+            hermes: '~/.hermes/config.yaml'
           }[app]
           return (
             <div key={app} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1084,8 +1294,8 @@ function ProxyTab({ providers, fallbackChain, onSetFallback }: {
         })}
         {tkErr && <div style={{ fontSize: 12, color: 'var(--st-error)' }}>{tkErr}</div>}
         <div className="ah-hint">
-          {tr('首次接管会备份原配置（同目录 .agenthub-bak），「恢复」精确还原原值。Codex / Hermes 对新会话生效；Claude Code 对新启动的会话生效；OpenClaw 若有常驻 gateway 需重启它。接管不影响 AgentHub 会话页的 StdIO 直连派发。',
-              'First takeover backs up the original config (.agenthub-bak alongside); "Restore" reverts exactly. Codex/Hermes apply to new sessions; Claude Code to newly started sessions; restart the OpenClaw gateway if it runs persistently. StdIO dispatch in Chat is unaffected.')}
+          {tr('首次接管会备份原配置（同目录 .agenthub-bak），「恢复」精确还原原值。Codex / Hermes 对新会话生效；Claude Code 对新启动的会话生效。接管不影响会话页的 StdIO 直连派发。',
+              'First takeover backs up the original config (.agenthub-bak alongside); "Restore" reverts exactly. Codex/Hermes apply to new sessions; Claude Code to newly started sessions. StdIO dispatch in Chat is unaffected.')}
         </div>
       </Enter>
 

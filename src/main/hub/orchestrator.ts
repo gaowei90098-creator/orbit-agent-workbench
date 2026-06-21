@@ -95,15 +95,111 @@ export function synthesisPrompt(
     `### 子任务 ${i + 1}: ${p.title}${p.agentId ? ' [' + p.agentId + ']' : ''}\n` +
     (p.error ? '(执行失败: ' + p.error + ')' : (p.content || '(无输出)'))
   ).join('\n\n')
+  const someFailed = parts.some(p => p.error)
+  const allFailed = parts.length > 0 && parts.every(p => p.error)
+  const guard = allFailed
+    ? 'EVERY subtask failed. Do NOT claim any deliverable is complete, and do NOT present pre-existing or unverified files already in the workspace as the result of this run. State clearly that the task did not succeed, summarize each failure and its likely cause, and give the single most useful next step.'
+    : someFailed
+      ? 'Some subtasks failed. Clearly separate what actually succeeded from what failed; do NOT present unverified or pre-existing files as completed deliverables, and do NOT overstate success.'
+      : 'Synthesize the successful outputs into the deliverable.'
   return [
     'You orchestrated the subtasks below for the user request. Synthesize their outputs into one coherent final answer. ' +
     'Resolve overlaps and note any failures briefly. Answer in the user\'s language.',
+    'IMPORTANT: ' + guard,
     '',
     'USER REQUEST:',
     userText,
     '',
     'SUBTASK RESULTS:',
     blocks
+  ].join('\n')
+}
+
+export interface CollabTurn {
+  agentId: string
+  round: number
+  text: string
+}
+
+function compactLine(value: string, limit = 1800): string {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit)
+}
+
+function formatCollabTurn(turn: CollabTurn, index: number): string {
+  return `### Turn ${index + 1} · Round ${turn.round} · ${turn.agentId}\n${turn.text || '(empty)'}`
+}
+
+function compactCollabTranscript(topic: string, transcript: CollabTurn[]): string {
+  if (transcript.length === 0) return 'No prior turns yet.'
+  const recent = transcript.slice(-6)
+  const older = transcript.slice(0, -6)
+  const olderSummary = older.length
+    ? [
+        'Earlier turns compressed for token control:',
+        compactLine(older.map(formatCollabTurn).join('\n\n'), 2200),
+        ''
+      ].join('\n')
+    : ''
+  return [
+    olderSummary,
+    'Recent full turns:',
+    recent.map((turn, index) => formatCollabTurn(turn, transcript.length - recent.length + index)).join('\n\n'),
+    '',
+    'Original topic:',
+    topic
+  ].filter(Boolean).join('\n')
+}
+
+export function collabTurnPrompt(
+  topic: string,
+  agentId: string,
+  transcript: CollabTurn[],
+  round: number,
+  totalRounds: number,
+  participants: string[] = []
+): string {
+  const lastPeer = [...transcript].reverse().find(turn => turn.agentId !== agentId)
+  const roleHint = participants.length > 1 && participants[0] === agentId
+    ? 'You open or defend a concrete proposal, implementation path, or thesis.'
+    : 'You stress-test, refine, challenge assumptions, and converge toward a better shared answer.'
+  return [
+    'You are participating in an Orbit multi-agent collaboration round.',
+    `Your agent id: ${agentId}. Round ${round} of ${totalRounds}.`,
+    roleHint,
+    '',
+    'TOPIC / USER REQUEST:',
+    topic,
+    '',
+    lastPeer ? 'MOST RECENT PEER TURN TO ANSWER DIRECTLY:\n' + lastPeer.text : 'There is no peer turn yet. Start with a concrete position and useful framing.',
+    '',
+    'SHARED TRANSCRIPT:',
+    compactCollabTranscript(topic, transcript),
+    '',
+    'RESPONSE RULES:',
+    '- Respond to specific points from the peer transcript instead of writing an isolated essay.',
+    '- Add new evidence, constraints, implementation detail, or a sharper objection.',
+    '- Move toward convergence: state what you agree with, what you dispute, and what should happen next.',
+    '- Be concise but substantive. Avoid generic praise and repeated summaries.'
+  ].join('\n')
+}
+
+export function collabSynthesisPrompt(topic: string, transcript: CollabTurn[]): string {
+  return [
+    'You are Orbit, the lead Agent synthesizing a multi-agent collaboration transcript.',
+    'Read the full shared record below and produce one final answer in the user\'s language.',
+    'Do not claim that files were edited or commands were run unless the transcript proves it.',
+    '',
+    'USER REQUEST:',
+    topic,
+    '',
+    'COLLABORATION TRANSCRIPT:',
+    compactCollabTranscript(topic, transcript),
+    '',
+    'FINAL ANSWER REQUIREMENTS:',
+    '- Name the strongest useful points from each agent.',
+    '- Resolve disagreements into a clear recommendation or conclusion.',
+    '- If this was a debate, state which side was more convincing and why.',
+    '- Include concrete next steps, risks, or acceptance checks when relevant.'
   ].join('\n')
 }
 

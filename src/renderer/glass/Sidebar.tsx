@@ -21,7 +21,7 @@ const NAV: Array<{ id: PageId; zh: string; en: string; icon: ReactNode }> = [
 export function Sidebar({
   page, setPage, agents, activeAgent, setActiveAgent, providerCount, proxyHost,
   workspaces, activeWorkspaceId, conversations, activeConversationId,
-  onNewConversation, onSelectWorkspace, onSelectConversation
+  onNewConversation, onSelectWorkspace, onSelectConversation, onDeleteConversation
 }: {
   page: PageId
   setPage: (p: PageId) => void
@@ -37,6 +37,7 @@ export function Sidebar({
   onNewConversation: (workspaceId?: string | null) => void
   onSelectWorkspace: (workspaceId: string | null) => void
   onSelectConversation: (conversationId: string) => void
+  onDeleteConversation: (conversationId: string) => void
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const orderedConversations = conversations.slice().sort((a, b) => b.updatedAt - a.updatedAt)
@@ -118,20 +119,41 @@ export function Sidebar({
                 <span className="ah-hint" style={{ fontSize: 10.5 }}>{groupConversations.length || ''}</span>
               </button>
               {visible.map(conv => (
-                <button key={conv.id} onClick={() => onSelectConversation(conv.id)} style={{
-                  display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', columnGap: 8,
-                  marginLeft: 20, minHeight: 29, padding: '4px 8px', borderRadius: 7,
+                <div key={conv.id} style={{
+                  display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 24px', alignItems: 'center', columnGap: 4,
+                  marginLeft: 20, minHeight: 29, padding: '2px 3px 2px 0', borderRadius: 7,
                   border: '1px solid',
                   borderColor: activeConversationId === conv.id ? 'rgba(88,217,149,0.24)' : 'transparent',
                   background: activeConversationId === conv.id ? 'rgba(88,217,149,0.12)' : 'transparent',
                   color: activeConversationId === conv.id ? 'var(--tx-1)' : 'var(--tx-2)',
-                  font: 'inherit', fontSize: 12.5, textAlign: 'left', cursor: 'pointer'
+                  font: 'inherit', fontSize: 12.5
                 }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: activeConversationId === conv.id ? 650 : 460 }}>
-                    {conv.title || tr('新对话', 'New chat')}
-                  </span>
-                  <span className="ah-hint" style={{ fontSize: 10.5 }}>{formatRelativeTime(conv.updatedAt)}</span>
-                </button>
+                  <button onClick={() => onSelectConversation(conv.id)} style={{
+                    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', columnGap: 8,
+                    minWidth: 0, minHeight: 25, padding: '3px 0 3px 8px',
+                    border: 'none', background: 'transparent', color: 'inherit',
+                    font: 'inherit', fontSize: 12.5, textAlign: 'left', cursor: 'pointer'
+                  }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: activeConversationId === conv.id ? 650 : 460 }}>
+                      {conv.title || tr('新对话', 'New chat')}
+                    </span>
+                    <span className="ah-hint" style={{ fontSize: 10.5 }}>{formatRelativeTime(conv.updatedAt)}</span>
+                  </button>
+                  <button
+                    title={tr('删除对话', 'Delete chat')}
+                    aria-label={tr('删除对话', 'Delete chat')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onDeleteConversation(conv.id)
+                    }}
+                    style={{
+                      width: 22, height: 22, borderRadius: 6, border: '1px solid transparent',
+                      background: 'transparent', color: 'var(--tx-3)', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0
+                    }}>
+                    <Icon d={IC.trash} size={12} />
+                  </button>
+                </div>
               ))}
               {groupConversations.length > 5 && (
                 <button onClick={() => setExpanded(prev => ({ ...prev, [key]: !prev[key] }))} style={{

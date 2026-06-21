@@ -2,8 +2,8 @@
  * Agent 元数据单一事实源（主进程）
  *
  * 此前 agent 的名称/能力/路由关键词/系统提示/接管支持分散在 index.ts、aggregator.ts、
- * dispatcher.ts、agent-detector.ts、router.ts 多处，彼此漂移且常漏掉新加的 marvis /
- * minimax-code。这里统一为一张表，各处派生使用。
+ * dispatcher.ts、agent-detector.ts、router.ts 多处，彼此漂移。这里统一为一张表，
+ * 各处派生使用。
  *
  * 注意：渲染层（src/renderer/glass/meta.ts）是独立打包单元，仍维护自己的展示用表，
  * 不从此处 import（避免跨 bundle 的 dev fs 限制）。
@@ -22,7 +22,7 @@ export interface AgentManifestEntry {
   systemPrompt: string
   /** 默认传输协议 */
   defaultProtocol: 'http' | 'stdio-plain'
-  /** 是否支持桌面配置接管（takeover.ts 覆盖：codex/claude/hermes/openclaw） */
+  /** 是否支持桌面配置接管（takeover.ts 覆盖：codex/claude/hermes） */
   takeoverSupported: boolean
   /** agent-detector 用于 PATH 探测的二进制名；无可用 CLI（如 marvis）则留空 */
   probeBinary?: string
@@ -69,21 +69,6 @@ export const AGENTS: AgentManifestEntry[] = [
     probeBinary: 'claude'
   },
   {
-    id: 'openclaw',
-    name: 'OpenClaw',
-    nameZh: 'OpenClaw',
-    caps: ['notify', 'remote-control', 'progress', 'approval'],
-    routeKeywords: ['通知', '通报', '进度', '远程', '手机', '提醒', '确认', '审批', 'notify', 'progress', 'remote', 'approval'],
-    systemPrompt: [
-      'You are OpenClaw, a user communication bridge for Orbit.',
-      'Your role is to notify the user about mission progress and relay remote user instructions back to Orbit.',
-      'Do not act as a coding, deployment, database, or file-writing worker unless the user explicitly redefines your role.'
-    ].join(' '),
-    defaultProtocol: 'http',
-    takeoverSupported: true,
-    probeBinary: 'openclaw'
-  },
-  {
     id: 'hermes',
     name: 'Hermes',
     nameZh: 'Hermes',
@@ -97,41 +82,26 @@ export const AGENTS: AgentManifestEntry[] = [
     defaultProtocol: 'http',
     takeoverSupported: true,
     probeBinary: 'hermes'
-  },
-  {
-    id: 'marvis',
-    name: 'Marvis',
-    nameZh: '腾讯 Marvis',
-    caps: ['knowledge', 'browser', 'android', 'office'],
-    routeKeywords: ['知识', '浏览器', '安卓', '办公', 'knowledge', 'browser', 'android', 'office'],
-    systemPrompt: "You are Marvis, Tencent's intelligent assistant specialised in knowledge management, browser automation, office workflows and Android device control.",
-    defaultProtocol: 'http',
-    takeoverSupported: false
-  },
-  {
-    id: 'minimax-code',
-    name: 'MiniMax Code',
-    nameZh: 'MiniMax Code',
-    caps: ['coding', 'agentic', 'tools', 'review', 'automation'],
-    routeKeywords: ['minimax', 'opencode', 'agentic', '代码审查', 'review', '自动化', '流水线', 'pipeline', '脚本', 'script'],
-    systemPrompt: 'You are MiniMax Code, an agentic coding assistant built on OpenCode. Be precise, write working code and explain briefly.',
-    defaultProtocol: 'stdio-plain',
-    takeoverSupported: false,
-    probeBinary: 'opencode'
   }
 ]
 
 export const WORKER_AGENTS = AGENTS.filter(agent => agent.id !== MAIN_AGENT_ID)
 export const WORKER_AGENT_IDS = WORKER_AGENTS.map(agent => agent.id)
-export const USER_BRIDGE_AGENT_IDS = ['hermes', 'openclaw'] as const
+export const USER_BRIDGE_AGENT_IDS = ['hermes'] as const
+export const DISABLED_AGENT_IDS = ['openclaw', 'marvis', 'minimax-code'] as const
 export const NOTIFICATION_BRIDGE_STORAGE_KEY = 'orbit.notificationBridge'
 export const DEFAULT_NOTIFICATION_BRIDGE_AGENT_ID = 'hermes'
 const USER_BRIDGE_ID_SET = new Set<string>(USER_BRIDGE_AGENT_IDS)
+const DISABLED_AGENT_ID_SET = new Set<string>(DISABLED_AGENT_IDS)
 export const EXECUTION_WORKER_AGENTS = WORKER_AGENTS.filter(agent => !USER_BRIDGE_ID_SET.has(agent.id))
 export const EXECUTION_WORKER_AGENT_IDS = EXECUTION_WORKER_AGENTS.map(agent => agent.id)
 
 export function isUserBridgeAgent(id: string): boolean {
   return USER_BRIDGE_ID_SET.has(id)
+}
+
+export function isDisabledAgent(id: string): boolean {
+  return DISABLED_AGENT_ID_SET.has(id)
 }
 
 export const AGENTS_BY_ID: Record<string, AgentManifestEntry> =

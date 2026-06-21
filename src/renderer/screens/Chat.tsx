@@ -11,14 +11,17 @@ import {
   visibleSequentialReplies
 } from '../glass/chat-transcript'
 import { OrchestrateView } from '../glass/orchestrate-view'
+import { CollaborateView } from '../glass/collaborate-view'
 import { SpotlightPanel } from '../glass/react-bits'
+
+type DispatchRunOptions = { rounds?: number; participants?: string[] }
 
 export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, onSend, onApprovePlan, onCancel, connectionSummary, openSetup, workspaceId, workspaces, pickWorkspace }: {
   activeAgent: string | null
   setActiveAgent: (id: string | null) => void
   messages: ChatMessage[]
   streaming: boolean
-  onSend: (text: string, mode: DispatchMode, targetAgent: string | null, workspaceId?: string | null) => void
+  onSend: (text: string, mode: DispatchMode, targetAgent: string | null, workspaceId?: string | null, options?: DispatchRunOptions) => void
   onApprovePlan: (taskId: string, approved: boolean) => void
   onCancel: () => void
   connectionSummary: ConnectionSummary
@@ -30,6 +33,7 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
   const [mode, setMode] = useState<DispatchMode>('auto')
   const [input, setInput] = useState('')
   const [routeHint, setRouteHint] = useState<string | null>(null)
+  const [collabRounds, setCollabRounds] = useState(3)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -48,16 +52,16 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
     return () => clearTimeout(timer)
   }, [input, mode, activeAgent])
 
-  const targetItem = activeAgent
-    ? connectionSummary.items.find(item => item.agentId === activeAgent)
+  const relayNeedsTarget = mode === 'chain' && !activeAgent
+  const effectiveActiveAgent = mode === 'collaborate' ? null : activeAgent
+  const targetItem = effectiveActiveAgent
+    ? connectionSummary.items.find(item => item.agentId === effectiveActiveAgent)
     : routeHint
     ? connectionSummary.items.find(item => item.agentId === routeHint)
-    : mode === 'chain'
-    ? connectionSummary.items.find(item => ['codex', 'claude'].includes(item.agentId) && item.state !== 'usable')
     : mode === 'broadcast' && connectionSummary.counts.usable === 0
     ? connectionSummary.items.find(item => item.action)
     : null
-  const blocked = !!targetItem && targetItem.state !== 'usable' && targetItem.state !== 'busy'
+  const blocked = relayNeedsTarget || (!!targetItem && targetItem.state !== 'usable' && targetItem.state !== 'busy')
 
   // 自动屏蔽未安装/未配置的 Agent：对话中「指定」目标只展示已就绪(usable/busy)的 Agent，
   // 其余(缺 Key / 待安装 / 未启用 / 异常)从目标选择器隐藏，避免误派发到跑不起来的 Agent。
@@ -76,7 +80,9 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
     const text = input.trim()
     if (!text || streaming || blocked) return
     setInput('')
-    onSend(text, activeAgent ? 'auto' : mode, activeAgent, workspaceId)
+    const finalMode = activeAgent && mode !== 'chain' && mode !== 'collaborate' ? 'auto' : mode
+    const target = mode === 'collaborate' ? null : activeAgent
+    onSend(text, finalMode, target, workspaceId, mode === 'collaborate' ? { rounds: collabRounds } : undefined)
   }
 
   return (
@@ -89,6 +95,8 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
         routeHint={routeHint}
         targetItem={targetItem}
         selectableAgentIds={selectableAgentIds}
+        collabRounds={collabRounds}
+        setCollabRounds={setCollabRounds}
         openSetup={openSetup}
         workspaceId={workspaceId}
         workspaces={workspaces}
@@ -102,6 +110,8 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
             <UserMessageRow text={m.text} meta={modeLabel(m.mode)} />
             {m.mode === 'orchestrate' && m.orchestration ? (
               <OrchestrateView state={m.orchestration} onApprovePlan={onApprovePlan} />
+            ) : m.mode === 'collaborate' && m.collaboration ? (
+              <CollaborateView state={m.collaboration} />
             ) : (
               messageAgentReplies(m).map((reply, idx) => (
                 <AgentMessageRow key={`${m.id}-${reply.agentId}-${idx}`} reply={reply} delay={idx * 70} openSetup={openSetup} />
@@ -111,7 +121,17 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
         ))}
       </div>
 
-      {blocked && targetItem && (
+      {relayNeedsTarget && (
+        <SpotlightPanel className="glass" spotlightColor="rgba(232, 179, 77, 0.14)" style={{ flex: 'none', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 10, borderColor: 'rgba(232,179,77,0.28)' }}>
+          <Icon d={IC.pulse} size={14} style={{ color: 'var(--st-busy)', flex: 'none' }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-1)' }}>{tr('请选择接棒 Agent', 'Pick the relay agent')}</div>
+            <div className="ah-hint">{tr('接力模式一次只启动一个 Agent。先在「指定 Agent」里选择 Codex 或 Claude Code，额度用完或卡住后再切换另一个继续。', 'Relay starts exactly one agent. Pick Codex or Claude Code first, then switch when quota runs out or work gets stuck.')}</div>
+          </div>
+        </SpotlightPanel>
+      )}
+
+      {!relayNeedsTarget && blocked && targetItem && (
         <SpotlightPanel className="glass" spotlightColor="rgba(232, 179, 77, 0.14)" style={{ flex: 'none', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 10, borderColor: 'rgba(232,179,77,0.28)' }}>
           <Icon d={IC.pulse} size={14} style={{ color: 'var(--st-busy)', flex: 'none' }} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -137,13 +157,13 @@ export function ChatScreen({ activeAgent, setActiveAgent, messages, streaming, o
           }} />
         {streaming
           ? <button className="ah-btn danger" onClick={onCancel}><Icon d={IC.stop} size={14} /> {tr('停止', 'Stop')}</button>
-          : <button className="ah-btn primary" onClick={send} disabled={!input.trim() || blocked}><Icon d={IC.send} size={14} /> {mode === 'orchestrate' && !activeAgent ? tr('生成流程', 'Plan') : tr('发送', 'Send')}</button>}
+          : <button className="ah-btn primary" onClick={send} disabled={!input.trim() || blocked}><Icon d={IC.send} size={14} /> {mode === 'orchestrate' && !activeAgent ? tr('生成流程', 'Plan') : mode === 'collaborate' ? tr('开始协作', 'Collaborate') : tr('发送', 'Send')}</button>}
       </SpotlightPanel>
     </div>
   )
 }
 
-function ChatToolbar({ activeAgent, setActiveAgent, mode, setMode, routeHint, targetItem, selectableAgentIds, openSetup, workspaceId, workspaces, pickWorkspace }: {
+function ChatToolbar({ activeAgent, setActiveAgent, mode, setMode, routeHint, targetItem, selectableAgentIds, collabRounds, setCollabRounds, openSetup, workspaceId, workspaces, pickWorkspace }: {
   activeAgent: string | null
   setActiveAgent: (id: string | null) => void
   mode: DispatchMode
@@ -151,6 +171,8 @@ function ChatToolbar({ activeAgent, setActiveAgent, mode, setMode, routeHint, ta
   routeHint: string | null
   targetItem: ConnectionSummary['items'][number] | null | undefined
   selectableAgentIds: string[]
+  collabRounds: number
+  setCollabRounds: (rounds: number) => void
   openSetup: (tab?: SetupTab) => void
   workspaceId: string | null
   workspaces: WorkspaceItem[]
@@ -159,9 +181,10 @@ function ChatToolbar({ activeAgent, setActiveAgent, mode, setMode, routeHint, ta
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const workspace = workspaces.find(w => w.id === workspaceId)
-  const modeText = activeAgent ? tr('指定 Agent', 'Targeted') : modeLabel(mode)
-  const targetText = activeAgent
-    ? AGENT_META[activeAgent]?.name
+  const effectiveActiveAgent = mode === 'collaborate' ? null : activeAgent
+  const modeText = effectiveActiveAgent ? tr('指定 Agent', 'Targeted') : modeLabel(mode)
+  const targetText = effectiveActiveAgent
+    ? AGENT_META[effectiveActiveAgent]?.name
     : mode === 'auto' && routeHint && AGENT_META[routeHint]
     ? tr(`预判 ${AGENT_META[routeHint].name}`, `Likely ${AGENT_META[routeHint].name}`)
     : tr('自动选择', 'Auto select')
@@ -220,11 +243,29 @@ function ChatToolbar({ activeAgent, setActiveAgent, mode, setMode, routeHint, ta
               options={[
                 { value: 'auto', label: tr('智能路由', 'Auto route') },
                 { value: 'broadcast', label: tr('广播全部', 'Broadcast') },
-                { value: 'chain', label: tr('链式接力', 'Chain relay') },
-                { value: 'orchestrate', label: tr('编排', 'Orchestrate') }
+                { value: 'chain', label: tr('Agent 接力', 'Agent relay') },
+                { value: 'orchestrate', label: tr('编排', 'Orchestrate') },
+                { value: 'collaborate', label: tr('协作', 'Collaborate') }
               ]} />
-            {mode === 'chain' && !activeAgent && <span className="ah-hint">{tr('Codex 到 Claude，前者输出作为后者输入', 'Codex to Claude, output of the first feeds the second')}</span>}
+            {mode === 'chain' && !activeAgent && <span className="ah-hint">{tr('先在下方选择一个接棒 Agent；本轮只启动被选中的 Agent。', 'Pick one relay agent below; only the selected agent starts this round.')}</span>}
+            {mode === 'chain' && activeAgent && <span className="ah-hint">{tr(`本轮只启动 ${AGENT_META[activeAgent].name}，之后可切换另一个 Agent 继续。`, `Only ${AGENT_META[activeAgent].name} starts this round. Switch later to continue.`)}</span>}
             {mode === 'orchestrate' && !activeAgent && <span className="ah-hint">{tr('Orbit 先生成协作流程，确认后再派发给子 Agent。', 'Orbit drafts the workflow first, then workers run after approval.')}</span>}
+            {mode === 'collaborate' && (
+              <>
+                <span className="ah-hint">{tr('Codex 与 Claude 共享 transcript 轮流回应，最后由 Orbit 合成结论。', 'Codex and Claude share one transcript, respond in turns, then Orbit synthesizes.')}</span>
+                <label className="ah-chip" style={{ gap: 8 }}>
+                  {tr('轮数', 'Rounds')}
+                  <input
+                    type="number"
+                    min={1}
+                    max={6}
+                    value={collabRounds}
+                    onChange={event => setCollabRounds(Math.max(1, Math.min(6, Number(event.target.value) || 3)))}
+                    style={{ width: 48, background: 'transparent', border: 'none', color: 'var(--tx-1)', font: 'inherit', outline: 'none' }}
+                  />
+                </label>
+              </>
+            )}
           </ToolbarSection>
 
           <ToolbarDivider />
@@ -254,7 +295,9 @@ function ChatToolbar({ activeAgent, setActiveAgent, mode, setMode, routeHint, ta
                 <button className="ah-btn sm" onClick={() => openSetupAndClose('routing')}>{tr('去设置', 'Set up')}</button>
               </span>
             )}
-            {activeAgent && <span className="ah-hint">{tr(`仅派发给 ${AGENT_META[activeAgent].name}`, `Dispatch to ${AGENT_META[activeAgent].name} only`)}</span>}
+            {mode === 'collaborate'
+              ? <span className="ah-hint">{tr('协作模式自动使用可执行子 Agent，不指定单个目标。', 'Collaborate automatically uses execution agents, not one selected target.')}</span>
+              : activeAgent && <span className="ah-hint">{tr(`仅派发给 ${AGENT_META[activeAgent].name}`, `Dispatch to ${AGENT_META[activeAgent].name} only`)}</span>}
           </ToolbarSection>
 
           <ToolbarDivider />

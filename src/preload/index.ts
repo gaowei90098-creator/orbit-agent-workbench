@@ -4,14 +4,16 @@ const api = {
   hub: {
     getStatus: () => ipcRenderer.invoke('hub:status'),
     routePreview: (text: string) => ipcRenderer.invoke('hub:routePreview', text),
-    dispatch: (text: string, mode?: string, targetAgent?: string, opts?: { thinking?: any; workspaceId?: string | null; requirePlanApproval?: boolean }) =>
+    dispatch: (text: string, mode?: string, targetAgent?: string, opts?: { thinking?: any; workspaceId?: string | null; requirePlanApproval?: boolean; rounds?: number; participants?: string[] }) =>
       ipcRenderer.invoke('hub:dispatch', {
         text,
         mode: mode || 'auto',
         targetAgent,
         thinking: opts?.thinking,
         workspaceId: opts?.workspaceId ?? null,
-        requirePlanApproval: !!opts?.requirePlanApproval
+        requirePlanApproval: !!opts?.requirePlanApproval,
+        rounds: opts?.rounds,
+        participants: opts?.participants
       }),
     approvePlan: (taskId: string, approved: boolean) => ipcRenderer.invoke('hub:approvePlan', taskId, approved),
     cancel: (taskId: string) => ipcRenderer.invoke('hub:cancel', taskId),
@@ -28,6 +30,10 @@ const api = {
   },
   proxy: {
     info: () => ipcRenderer.invoke('proxy:info')
+  },
+  network: {
+    getProxy: () => ipcRenderer.invoke('network:getProxy'),
+    setProxy: (url: string) => ipcRenderer.invoke('network:setProxy', url)
   },
   agents: {
     locate: () => ipcRenderer.invoke('agents:locate')

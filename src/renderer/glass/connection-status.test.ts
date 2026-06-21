@@ -41,7 +41,7 @@ const bindings: BindingDef[] = [
     protocol: 'http'
   },
   {
-    agentId: 'minimax-code',
+    agentId: 'hermes',
     providerId: '',
     modelId: '',
     thinking: { mode: 'auto', level: 'medium' },
@@ -55,7 +55,7 @@ describe('connection status summary', () => {
       agents: {
         codex: { status: 'off' },
         claude: { status: 'idle' },
-        'minimax-code': { status: 'idle' }
+        hermes: { status: 'idle' }
       },
       bindings,
       providers
@@ -71,7 +71,7 @@ describe('connection status summary', () => {
     })
     expect(summary.headlineZh).toContain('2 个可用')
     expect(summary.items.find(item => item.agentId === 'codex')?.state).toBe('needs-provider')
-    expect(summary.items.find(item => item.agentId === 'minimax-code')?.state).toBe('usable')
+    expect(summary.items.find(item => item.agentId === 'hermes')?.state).toBe('usable')
   })
 
   it('offers a first-run action for provider and CLI failures', () => {

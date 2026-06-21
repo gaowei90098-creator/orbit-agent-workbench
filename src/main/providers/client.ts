@@ -14,6 +14,8 @@
 
 import { AgentRouteBinding, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionRequest, ModelDefinition, ProviderDefinition, ThinkingConfig, ThinkingSummary } from './types'
 import { THINKING_BUDGET_TOKENS } from './presets'
+import { anthropicMessagesUrl, openAIChatCompletionsUrl, openAIResponsesUrl } from './endpoints'
+import { proxyFetch } from '../net/http'
 
 export interface StreamCallbacks {
   onContent?: (delta: string) => void
@@ -89,7 +91,7 @@ export class ProviderClient {
 
   // ---- OpenAI Responses API（GPT-5 系列） ----
   private async streamOpenAIResponses(provider: ProviderDefinition, model: ModelDefinition, messages: ChatCompletionMessage[], opts: CallOptions, thinking: ThinkingConfig, cb: StreamCallbacks, signal?: AbortSignal): Promise<void> {
-    const url = `${provider.baseUrl.replace(/\/$/, '')}/responses`
+    const url = openAIResponsesUrl(provider.baseUrl)
     const body: any = {
       model: model.id,
       input: openaiMessagesToResponsesInput(messages),
@@ -108,7 +110,7 @@ export class ProviderClient {
       if (opts.toolChoice !== undefined) body.tool_choice = opts.toolChoice
     }
 
-    const res = await fetch(url, { method: 'POST', headers: this.headersFor(provider), body: JSON.stringify(body), signal })
+    const res = await proxyFetch(url, { method: 'POST', headers: this.headersFor(provider), body: JSON.stringify(body), signal })
     if (!res.ok || !res.body) {
       const txt = await res.text().catch(() => '')
       throw new Error(`OpenAI Responses HTTP ${res.status}: ${txt.slice(0, 300)}`)
@@ -184,7 +186,7 @@ export class ProviderClient {
 
   // ---- OpenAI 兼容（含 OpenAI / DeepSeek / OpenRouter / 自定义） ----
   private async streamOpenAICompat(provider: ProviderDefinition, model: ModelDefinition, messages: ChatCompletionMessage[], opts: CallOptions, thinking: ThinkingConfig, cb: StreamCallbacks, signal?: AbortSignal): Promise<void> {
-    const url = `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`
+    const url = openAIChatCompletionsUrl(provider.baseUrl)
     const body: any = this.buildRequest(messages, opts.systemPrompt, thinking)
     body.stream_options = { include_usage: true }   // 让上游在末尾 chunk 返回 usage
     if (opts.tools && opts.tools.length) {           // 工具透传（仅 OpenAI 兼容上游，1:1 转发）
@@ -192,7 +194,7 @@ export class ProviderClient {
       if (opts.toolChoice !== undefined) body.tool_choice = opts.toolChoice
     }
     const headers = this.headersFor(provider)
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+    const res = await proxyFetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
     if (!res.ok || !res.body) {
       const txt = await res.text().catch(() => '')
       throw new Error(`HTTP ${res.status} from ${provider.name}: ${txt.slice(0, 200)}`)
@@ -223,7 +225,7 @@ export class ProviderClient {
 
   // ---- Anthropic Messages ----
   private async streamAnthropic(provider: ProviderDefinition, model: ModelDefinition, messages: ChatCompletionMessage[], opts: CallOptions, thinking: ThinkingConfig, cb: StreamCallbacks, signal?: AbortSignal): Promise<void> {
-    const url = `${provider.baseUrl.replace(/\/$/, '')}/messages`
+    const url = anthropicMessagesUrl(provider.baseUrl)
     const headers = this.headersFor(provider)
     const sysText = opts.systemPrompt || ''
     const supportsThinking = model.supportsThinking && provider.capabilities.nativeThinking
@@ -241,7 +243,7 @@ export class ProviderClient {
     if (this.binding.temperature !== undefined && !wantThink) body.temperature = this.binding.temperature
     if (opts.tools && opts.tools.length) body.tools = openaiToolsToAnthropic(opts.tools)  // 工具支持（Claude-B 新增）
 
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+    const res = await proxyFetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
     if (!res.ok || !res.body) {
       const txt = await res.text().catch(() => '')
       throw new Error(`Anthropic HTTP ${res.status}: ${txt.slice(0, 200)}`)
@@ -324,7 +326,7 @@ export class ProviderClient {
       body.generationConfig = { maxOutputTokens: this.binding.maxOutputTokens }
     }
 
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+    const res = await proxyFetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
     if (!res.ok || !res.body) {
       const txt = await res.text().catch(() => '')
       throw new Error(`Gemini HTTP ${res.status}: ${txt.slice(0, 200)}`)
