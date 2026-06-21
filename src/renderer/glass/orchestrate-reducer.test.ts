@@ -32,6 +32,28 @@ describe('orchestrate reducer', () => {
     expect(s.phase).toBe('running')
   })
 
+  it('plan 事件保存共享上下文账本路径', () => {
+    const s = applyOrchestrateEvent(undefined, {
+      kind: 'orchestrate:plan',
+      taskId: 'task-1',
+      sharedContextPath: '.orbit/missions/mission-task-1/shared-context.md',
+      subtasks: [{ id: 'a', title: 'A' }]
+    })
+    expect(s.sharedContextPath).toBe('.orbit/missions/mission-task-1/shared-context.md')
+  })
+
+  it('plan 快照保留后端合同状态', () => {
+    const s = applyOrchestrateEvent(undefined, {
+      kind: 'orchestrate:plan',
+      subtasks: [
+        { id: 'a', title: 'A', status: 'done' },
+        { id: 'b', title: 'B', status: 'failed' },
+        { id: 'c', title: 'C', status: 'running' }
+      ]
+    })
+    expect(s.subtasks.map(t => t.status)).toEqual(['done', 'error', 'running'])
+  })
+
   it('subtask 事件更新状态/agent/内容(支持增量拼接)', () => {
     let s = initialOrchestrateState()
     s = applyOrchestrateEvent(s, { kind: 'orchestrate:plan', subtasks: [{ id: 'a', title: 'A' }] })

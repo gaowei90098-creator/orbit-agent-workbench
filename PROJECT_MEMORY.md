@@ -1361,3 +1361,237 @@ Next recommended work:
 1. In the next chat, start from `/Users/gao90098/Desktop/AgentForge-MissionControl`, read this file first, and target the `workbench` remote / `orbit-agent-workbench` repo.
 2. For any future GitHub publish, sync current source into a clean snapshot or align this local git history with `workbench/main` before pushing.
 3. Add polished screenshots/GIFs to README and create a GitHub Release once a signed/notarized installer policy is ready.
+
+## 2026-06-21 Orbit Startup Video and Icon Refresh
+
+User request:
+
+- Use `/Users/gao90098/Desktop/微信图片_20260619172247_258_606.jpg` as the new Orbit logo/app icon.
+- Use `/Users/gao90098/Desktop/logoA2.zip` video material as the app startup animation.
+- Make startup transition smoothly from the animation into the Orbit console.
+
+Implemented:
+
+- Generated new Orbit icon assets from the supplied image:
+  - `build/icon.png`
+  - `build/icon-linux.png`
+  - `build/icon.icns`
+  - `src/renderer/public/icons/orbit.png`
+  - `src/renderer/public/icons/default.png`
+- Updated `package.json` macOS packaging config to use `build/icon.icns`.
+- Updated `.gitignore` so `build/icon.icns` is not hidden by the existing `build/*` ignore rule.
+- Extracted `logoA2/logoA.mp4` and transcoded it from HEVC 4K to a renderer-friendly H.264 MP4:
+  - `src/renderer/public/media/orbit-intro.mp4`
+  - 1920x1102, 30fps, 6.47s, about 1.65MB, no audio.
+- Updated `src/renderer/App.tsx`.
+  - Added `OrbitIntroSplash`, a first-launch overlay that auto-plays the startup video muted.
+  - The splash fades out on video end, with timeout/error fallback so Orbit never blocks on media playback.
+  - The underlying console starts slightly blurred/dimmed and resolves as the splash exits.
+- Updated `src/renderer/globals.css`.
+  - Added splash video layout, vignette, fade-out, and console handoff transitions.
+- Updated `src/renderer/index.html`.
+  - Added explicit `media-src 'self'` CSP permission for packaged local video playback.
+
+Validation and desktop delivery:
+
+- `npm run typecheck` passed.
+- `npm test` passed: 35 test files, 183 tests.
+- `npm run build` passed and copied `src/main/orbit-runtime.cjs` to `out/main/orbit-runtime.cjs`.
+- `npm run unpack` passed and produced `dist/mac-arm64/Orbit.app`.
+- Replaced `/Users/gao90098/Desktop/Orbit.app` with `dist/mac-arm64/Orbit.app`.
+- Ran `codesign --force --deep --sign - /Users/gao90098/Desktop/Orbit.app`.
+- Ran `codesign --verify --deep --strict --verbose=2 /Users/gao90098/Desktop/Orbit.app`; verification passed.
+- Cold relaunched `/Users/gao90098/Desktop/Orbit.app` after force-ending the old tray process.
+- Confirmed new desktop app PID `40337` listens on:
+  - `127.0.0.1:9527`
+  - `127.0.0.1:9528`
+- Verified local `/v1/models` and `/oauth/evomap/status`; EvoMap returned `connected:true`, `tokenSource:"stored-encrypted"`, `pendingCount:0`.
+- Visual smoke checks:
+  - `/tmp/orbit-cold-splash-check.png` captured the startup video overlay.
+  - `/tmp/orbit-console-front-check.png` captured the post-splash Orbit console without a blank screen.
+
+Current caveat:
+
+- Windows `build/icon.ico` still has the previous icon because this macOS workspace does not currently include an ICO writer such as ImageMagick. The macOS app icon, Linux icon, tray/runtime PNG, and in-app Orbit/default icons are updated.
+
+Next recommended work:
+
+1. If Windows packaging matters next, install or add an ICO generation path and regenerate `build/icon.ico` from the same source image.
+2. Consider adding a Settings appearance toggle later if users want to skip the startup animation on every launch.
+
+## 2026-06-21 Collaborate Mode Product Slice
+
+User guidance:
+
+- Treat external implementation notes as reference only; verify them against Orbit's actual architecture and workspace rules first.
+- Product changes must be made from a product-manager perspective, not as narrow patches. Startup stability and coherent user flow matter more than simply wiring a button.
+
+Reference/spec audit:
+
+- Correct: `src/main/orbit-runtime.cjs` is the authoritative desktop runtime; changing only modular `src/main/hub/*.ts` would not change the packaged app.
+- Correct: a real collaboration mode needs a shared transcript where workers can respond to prior turns, not just broadcast/chain/orchestrate map-reduce.
+- Adjusted: renderer mode selection lives in `src/renderer/screens/Chat.tsx`, not `src/renderer/glass/ui.tsx`.
+- Adjusted: Hermes remains a user notification/remote instruction bridge and is not included in the execution collaboration pool.
+- Not adopted: no external AutoGen/CrewAI/Multica/Reactor source was imported. Orbit kept its own Dispatcher, CollaborationBus, Memory, and UI contracts.
+
+Implemented:
+
+- Added `collaborate` dispatch mode end-to-end.
+- Updated authoritative runtime `src/main/orbit-runtime.cjs`.
+  - `dispatch()` now routes `mode === "collaborate"` to `runCollaborate()`.
+  - `runCollaborate()` selects executable worker agents only, defaults to Codex + Claude when both are bound, requires at least two workers, and keeps Orbit as the lead synthesizer.
+  - `rounds` defaults to 3 and is hard-clamped to 1-6.
+  - Each worker turn receives the shared transcript, the most recent peer turn, and a compacted older-history capsule via the existing handoff capsule mechanism.
+  - Emits `collaborate:start`, `collaborate:turn`, `collaborate:synthesizing`, `collaborate:final`, and `collaborate:error`.
+  - Records collaboration lifecycle events through the existing CollaborationBus using mission/contract/synthesis/outcome event types.
+  - Failure is explicit: empty/error worker turns emit a failed turn and abort; Orbit does not synthesize a fake success.
+  - WebSocket and IPC dispatch paths now pass `rounds` and `participants`.
+- Updated TS mirror/test layer.
+  - `src/main/hub/dispatcher.ts` mirrors the `collaborate` mode contract and control flow.
+  - `src/main/hub/orchestrator.ts` adds `collabTurnPrompt()` and `collabSynthesisPrompt()`.
+  - Added `src/main/hub/__tests__/collaborate.test.ts` to prove second-round prompts include peer prior-turn content and that turn errors do not become completed results.
+- Updated renderer.
+  - `src/renderer/glass/meta.ts` and `src/renderer/glass/i18n.ts` know the new mode label.
+  - Added `src/renderer/glass/collaborate-reducer.ts`.
+  - Added `src/renderer/glass/collaborate-view.tsx`, a dedicated round-by-round collaboration timeline with Orbit final conclusion.
+  - `src/renderer/App.tsx` aggregates `collaborate:*` events separately and suppresses internal agent stream events so the UI does not duplicate output.
+  - `src/renderer/screens/Chat.tsx` adds a `协作 / Collaborate` mode and a simple rounds input. Collaborate mode clears/ignores single-agent targeting by design.
+  - `src/preload/index.ts` and `src/renderer/vite-env.d.ts` pass typed `rounds`/`participants` through dispatch options.
+
+Validation completed before packaging:
+
+- `node -c src/main/orbit-runtime.cjs` passed.
+- `npm run typecheck` passed.
+- `npx vitest run src/main/hub/__tests__/collaborate.test.ts` passed.
+- `npm test` passed: 36 test files, 185 tests.
+
+Desktop delivery:
+
+- `npm run build` passed and copied `src/main/orbit-runtime.cjs` to `out/main/orbit-runtime.cjs`.
+- `npm run unpack` passed and produced `dist/mac-arm64/Orbit.app`.
+- Replaced `/Users/gao90098/Desktop/Orbit.app` with `dist/mac-arm64/Orbit.app`.
+- Ran `codesign --force --deep --sign - /Users/gao90098/Desktop/Orbit.app`.
+- Ran `codesign --verify --deep --strict --verbose=2 /Users/gao90098/Desktop/Orbit.app`; verification passed.
+- Cold relaunched `/Users/gao90098/Desktop/Orbit.app`.
+- A first normal `open` verification did not show listeners within 32 seconds, so the packaged binary was launched from terminal for diagnostics; Hub and proxy started normally. After force-ending the diagnostic instance and cold-launching via normal `open` again, startup verified.
+- Confirmed desktop app PID `50284` listens on:
+  - `127.0.0.1:9527`
+  - `127.0.0.1:9528`
+- Verified `/v1/models` responds and `/oauth/evomap/status` returns `connected:true`, `tokenSource:"stored-encrypted"`, `pendingCount:0`.
+- Visual smoke check: `/tmp/orbit-collaborate-ui-check.png` captured the post-launch Orbit UI without blank/black startup failure.
+
+Next recommended work:
+
+1. After packaged desktop verification, run a real small `协作` task with Codex CLI + Claude Code and inspect `collaboration/events.json` for the turn events.
+2. Consider a later Settings option for default collaboration rounds and optional early-stop criteria, but keep the launch slice simple and bounded.
+
+## 2026-06-21 Parallel Swimlane Orchestration Prototype
+
+User guidance:
+
+- Evaluate the proposed "replace checklist with pipeline/swimlanes" design before touching production app files.
+- Use `DavidHDev/react-bits` only if it fits Orbit's current theme and product rules.
+- The goal is to emphasize parallel execution and collaboration, not to narrowly patch the existing stacked list.
+
+Reference/product audit:
+
+- The swimlane direction is product-correct for `orchestrate`: horizontal lanes make independent worker execution much clearer than the current vertical task rows.
+- The proposal needed adjustment: Hermes should remain a user notification / remote-instruction bridge and should not be represented as an execution worker lane.
+- The local `reference_repos/ui-component-libraries/react-bits` copy was reviewed. The full library is not a good app dependency because it brings many heavy UI/3D/motion dependencies. Orbit should keep using/adapting its existing lightweight `SpotlightPanel` / `ShinyText` style instead of importing the library wholesale.
+
+Implemented:
+
+- Added a standalone, non-production prototype at `docs/prototypes/orbit-parallel-swimlane.html`.
+- The prototype uses Orbit's current dark glass tokens, mint/cyan/violet atmosphere, Codex/Claude identity colors, and a separate Hermes bridge strip.
+- Included fan-out control bar, two worker lanes, status-coded progress/log motion, failed validation state, fan-in synthesis bar, horizontal overflow for narrow screens, and `data-motion="off"` support.
+
+Verification:
+
+- Opened the standalone HTML in Chrome and captured a desktop visual smoke screenshot at `/tmp/orbit-parallel-swimlane-prototype.png`.
+- Captured a narrow-window smoke screenshot at `/tmp/orbit-parallel-swimlane-narrow.png`; text did not overlap and the lanes preserved horizontal scroll instead of being squeezed.
+- No production renderer/main source, runtime assets, packaging config, or desktop app bundle was changed, so the desktop delivery loop was intentionally not run for this prototype-only change.
+
+Next recommended work:
+
+1. If approved, integrate the swimlane model into `src/renderer/glass/orchestrate-view.tsx` using real `OrchestrateState` / `orchestrate:*` events.
+2. Keep progress visually state-based unless the backend exposes true percentages; do not fake exact progress.
+3. Add lane grouping by execution worker and retain Hermes only as a bridge/status strip.
+
+## 2026-06-21 Orchestrate Swimlanes + Shared Mission Context Ledger
+
+User guidance:
+
+- Integrate the approved parallel/swimlane orchestration UI into the real Orbit desktop app.
+- Also inspect `openagents-org/openagents` source to understand how it implements multi-agent shared context; do not blindly copy claims from README/screenshots.
+- Make product-level changes with stability in mind, not a temporary UI patch.
+
+OpenAgents source audit:
+
+- Local reference repo checked at `reference_repos/collaboration-frameworks/openagents`, commit `45abec586df5761da08aa042d4f6ccbe7370d28b`.
+- OpenAgents shared context is implemented as a workspace channel/event system plus shared files and shared browser tools, not as hidden shared LLM memory.
+- Key source points inspected:
+  - `packages/agent-connector/src/workspace-client.js`: agents post and poll `workspace.message.posted` events for the same workspace/channel.
+  - `sdk/src/openagents/mcp_server.py`: MCP tools expose `workspace_get_history`, shared file read/write/list/delete, and shared browser operations.
+  - `workspace/backend/app/routers/events.py`: `/v1/events` persists workspace events and routes posted workspace messages.
+  - `workspace/backend/app/routers/files.py`: shared file upload emits `workspace.file.uploaded`.
+- Product conclusion for Orbit: do not import the full OpenAgents cloud workspace stack. Implement the most important local equivalent first: a mission-scoped shared context ledger inside the user workspace, connected to Orbit's existing CollaborationBus/Reactor execution.
+
+Implemented:
+
+- Updated authoritative runtime `src/main/orbit-runtime.cjs`.
+  - Added `memory.updated` to `CollaborationEventTypes`.
+  - Added mission shared context ledger generation.
+  - Ledger path priority:
+    - workspace-bound missions: `.orbit/missions/<mission-id>/shared-context.md`
+    - fallback with no workspace: app userData `missions/<mission-id>/shared-context.md`
+  - Ledger includes mission goal, shared Definition of Done, task DAG, contract details, previous worker results, artifact registry, Reactor waves, handoff capsules, and recent mission timeline.
+  - `buildOpenAgentsWorkspaceContext()` now tells each worker where the ledger is and how to use it.
+  - `runOrchestrate()` refreshes the ledger when the mission starts running, before worker attempts, after handoff capsules, after each wave, after Reactor replans, before synthesis, and after final completion/failure.
+  - `orchestrate:plan` snapshots include `sharedContextPath` so the UI can surface the real shared context artifact.
+- Updated renderer.
+  - Replaced the stacked task-list orchestration panel with a horizontal pipeline/swimlane UI in `src/renderer/glass/orchestrate-view.tsx`.
+  - Added fan-out control strip, shared-context ledger path, per-worker lanes, status-coded progress/log areas, validation failure state, fan-in synthesis, and separate Hermes bridge strip.
+  - `src/renderer/glass/orchestrate-reducer.ts` stores `sharedContextPath` and preserves backend contract status from later `orchestrate:plan` snapshots.
+  - Added reducer test coverage for shared context path propagation.
+  - Added `.orx-*` CSS in `src/renderer/globals.css`, matching Orbit's current dark glass/mint/cyan theme and preserving narrow-screen horizontal scroll.
+- Updated TS mirror typing.
+  - `src/main/hub/collaboration-events.ts` includes `MemoryUpdated`.
+  - `src/main/hub/dispatcher.ts` stream type allows `sharedContextPath` on `orchestrate:plan`.
+
+Validation:
+
+- `node -c src/main/orbit-runtime.cjs` passed.
+- `npm run typecheck` passed.
+- Targeted tests passed:
+  - `src/renderer/glass/orchestrate-reducer.test.ts`
+  - `src/main/hub/__tests__/orchestrator.test.ts`
+  - `src/main/hub/__tests__/orchestrator-e2e.test.ts`
+- `npm test` passed: 36 files, 187 tests.
+- `npm run build` passed and copied `src/main/orbit-runtime.cjs` to `out/main/orbit-runtime.cjs`.
+- `npm run unpack` passed and produced `dist/mac-arm64/Orbit.app`.
+- Replaced `/Users/gao90098/Desktop/Orbit.app` with `dist/mac-arm64/Orbit.app`.
+- Ran `codesign --force --deep --sign - /Users/gao90098/Desktop/Orbit.app`.
+- Ran `codesign --verify --deep --strict --verbose=2 /Users/gao90098/Desktop/Orbit.app`; verification passed.
+- Relaunched `/Users/gao90098/Desktop/Orbit.app`.
+- Verified desktop app PID `89381` listens on:
+  - `127.0.0.1:9527`
+  - `127.0.0.1:9528`
+- Verified proxy health:
+  - `http://127.0.0.1:9528/health` returns `{"ok":true,...}`.
+  - `http://127.0.0.1:9528/v1/models` returns model list.
+- Verified EvoMap OAuth status endpoint responds on 9527, but current token state is `connected:false`, `reason:"expired"`; this is an external auth state, not a startup regression.
+- Visual smoke:
+  - Screenshot saved at `/tmp/orbit-after-swimlane-shared-context.png`; Orbit process/window exists and the app is running.
+  - `System Events` reports Orbit window `Orbit` at position `95,33` size `1280,820`, but macOS kept Chrome frontmost during the final screenshot attempts.
+
+Next recommended work:
+
+1. Run a small real `智能路由 / Orchestrate` mission and inspect the generated `.orbit/missions/<mission-id>/shared-context.md` to confirm workers cite and update the ledger through handoff capsules.
+2. Consider adding a small "Open ledger" affordance in the orchestrate UI after the user has seen the path work in a real mission.
+3. Later, if the product needs true live peer-to-peer same-wave context, add a local event/MCP tool layer around the ledger; do not fake live sharing in the UI.
+
+## 2026-06-21 GitHub Publication Prep
+
+- User decided not to build a Vercel/cloud demo; future demos should be real local desktop demonstrations because Codex CLI / Claude Code membership, local file access, and workspace mutation require the desktop runtime.
+- Added `outputs/` to `.gitignore` so temporary generated decks and inspection logs are not published to the public source repo.
+- Publishing target remains the canonical public `workbench` remote (`gaowei90098-creator/orbit-agent-workbench`), not the old `origin` or `orbit` remotes.

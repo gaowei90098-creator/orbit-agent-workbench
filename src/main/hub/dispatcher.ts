@@ -12,7 +12,20 @@ import {
   agentSystemPrompt
 } from "./agents"
 import { buildAgentRuntimeSystemPrompt, buildAgentTaskPrompt, RuntimeMemoryEntry } from "./agent-runtime"
-import { decompositionPrompt, fallbackPlanArtifact, parsePlan, synthesisPrompt, verifyPrompt, parseVerdict, retryPrompt, subtaskContractPrompt, ORCHESTRATOR_LEAD_SYSTEM } from "./orchestrator"
+import {
+  decompositionPrompt,
+  fallbackPlanArtifact,
+  parsePlan,
+  synthesisPrompt,
+  verifyPrompt,
+  parseVerdict,
+  retryPrompt,
+  subtaskContractPrompt,
+  ORCHESTRATOR_LEAD_SYSTEM,
+  collabTurnPrompt,
+  collabSynthesisPrompt,
+  CollabTurn
+} from "./orchestrator"
 import { ChatCompletionMessage, ThinkingConfig } from "../providers/types"
 import { getWorkspaceManager } from "./workspace"
 import { homedir } from "node:os"
@@ -30,7 +43,7 @@ import { isHttpAgenticEnabled } from "../agentic/capabilities"
 import { getApprovalConfig, ApprovalRequest, GuardedTool } from "../agentic/approval"
 // --- /AgentHub skills + native agentic ---
 
-export type DispatchMode = "auto" | "broadcast" | "chain" | "orchestrate"
+export type DispatchMode = "auto" | "broadcast" | "chain" | "orchestrate" | "collaborate"
 
 /** stdio 路径无法像 HTTP 那样下发 reasoning 参数，开启 thinking 时改用 prompt 指令对齐行为。 */
 const STDIO_THINKING_DIRECTIVE =
@@ -79,6 +92,10 @@ export interface DispatchOptions {
   workspaceId?: string | null
   /** 编排模式下先生成 PlanArtifact，等待用户确认后再执行子 Agent。 */
   requirePlanApproval?: boolean
+  /** 协作模式轮数；默认 3，上限 6，防止 token 失控。 */
+  rounds?: number
+  /** 协作模式可选参与者优先级；仍只允许执行 worker。 */
+  participants?: string[]
 }
 
 export type StreamEvent =
@@ -91,7 +108,7 @@ export type StreamEvent =
   // 写/执行审批请求（'ask' 策略命中时发出）；渲染层弹窗 → agentic:resolveApproval 回传决策
   | { kind: "approval"; taskId: string; agentId: string; request: { id: string; tool: GuardedTool; toolName: string; label?: string; detail?: string } }
   // 编排模式（Orchestrator）
-  | { kind: "orchestrate:plan"; taskId: string; missionId?: string; leadAgentId?: string; planArtifact?: PlanArtifact; subtasks: Array<{
+  | { kind: "orchestrate:plan"; taskId: string; missionId?: string; leadAgentId?: string; planArtifact?: PlanArtifact; sharedContextPath?: string; subtasks: Array<{
       id: string
       title: string
       detail?: string
@@ -109,6 +126,12 @@ export type StreamEvent =
   | { kind: "orchestrate:synthesizing"; taskId: string }
   | { kind: "orchestrate:final"; taskId: string; content: string }
   | { kind: "orchestrate:error"; taskId: string; error: string }
+  // 多轮协作模式：共享 transcript，worker 轮流回应，Orbit 最终合成。
+  | { kind: "collaborate:start"; taskId: string; missionId: string; participants: string[]; rounds: number; topic: string }
+  | { kind: "collaborate:turn"; taskId: string; missionId: string; round: number; agentId: string; status: "running" | "done" | "error"; content?: string; error?: string }
+  | { kind: "collaborate:synthesizing"; taskId: string; missionId: string; leadAgentId: string }
+  | { kind: "collaborate:final"; taskId: string; missionId: string; content: string }
+  | { kind: "collaborate:error"; taskId: string; missionId?: string; error: string }
 
 export class Dispatcher extends EventEmitter {
   private tasks: Map<string, DispatchTask> = new Map()
@@ -222,6 +245,8 @@ export class Dispatcher extends EventEmitter {
     try {
       if (mode === "orchestrate") {
         await this.runOrchestrate(task, text, opts)
+      } else if (mode === "collaborate") {
+        await this.runCollaborate(task, text, opts)
       } else {
         const targets = this.resolveTargets(task, mode, targetAgent)
         if (targets.length === 0) throw new Error("No available provider for the requested routing. Open Settings -> Providers to configure API keys.")
@@ -278,6 +303,158 @@ export class Dispatcher extends EventEmitter {
     })), this.missionStore?.getRouterContext())
     if (routed && executionBindings.find(b => b.agentId === routed)) return [{ agentId: routed }]
     return executionBindings.length > 0 ? [{ agentId: executionBindings[0].agentId }] : []
+  }
+
+  private selectCollaborators(opts: DispatchOptions, workerIds: string[]): string[] {
+    const requested = Array.isArray(opts.participants) ? opts.participants : []
+    const priority = [...requested, "codex", "claude", ...workerIds]
+    const seen = new Set<string>()
+    const selected: string[] = []
+    for (const raw of priority) {
+      const id = raw === "claude-code" ? "claude" : raw
+      if (!id || seen.has(id) || !workerIds.includes(id)) continue
+      seen.add(id)
+      selected.push(id)
+      if (selected.length >= 3) break
+    }
+    return selected
+  }
+
+  private collaborationRounds(opts: DispatchOptions): number {
+    const raw = Number(opts.rounds ?? 3)
+    if (!Number.isFinite(raw)) return 3
+    return Math.max(1, Math.min(6, Math.round(raw)))
+  }
+
+  private async runCollaborate(task: DispatchTask, text: string, opts: DispatchOptions): Promise<void> {
+    const missionId = `mission-${task.id}`
+    task.missionId = missionId
+    try {
+      const mgr = getProviderManager()
+      const bindings = mgr.getBindings()
+      const workerIds = Array.from(new Set(bindings.map(binding => binding.agentId).filter(id => isExecutionWorkerAgent(id))))
+      const participants = this.selectCollaborators(opts, workerIds)
+      if (participants.length < 2) {
+        throw new Error("协作模式至少需要两个可执行子 Agent。请在 设置 -> 路由 绑定 Codex CLI 和 Claude Code。")
+      }
+      if (!bindings.find(binding => binding.agentId === MAIN_AGENT_ID)) {
+        throw new Error("Orbit 主 Agent 尚未绑定。协作模式需要 Orbit 负责最终评判与合成。")
+      }
+      if (!mgr.resolveBinding(MAIN_AGENT_ID)) {
+        throw new Error("Orbit 主 Agent 尚未配置可用模型/API Key。请到 设置 -> 路由 配置 Orbit。")
+      }
+
+      const rounds = this.collaborationRounds(opts)
+      const transcript: CollabTurn[] = []
+      this.emit("stream", { kind: "collaborate:start", taskId: task.id, missionId, participants, rounds, topic: text })
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.MissionStarted,
+        missionId,
+        payload: { missionId, taskId: task.id, mode: "collaborate", topic: text, participants, rounds }
+      })
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.MissionStatusChanged,
+        missionId,
+        payload: { missionId, taskId: task.id, status: "running", mode: "collaborate" }
+      })
+      await this.recordUserNotification(missionId, "collaboration_started", { taskId: task.id, participants, rounds })
+
+      for (let round = 1; round <= rounds; round++) {
+        for (const agentId of participants) {
+          if ((task as any).status === "cancelled") return
+          this.emit("stream", { kind: "collaborate:turn", taskId: task.id, missionId, round, agentId, status: "running" })
+          await this.recordCollaboration({
+            type: CollaborationEventTypes.ContractStatusChanged,
+            missionId,
+            source: agentAddress(agentId),
+            payload: { contractId: `collab-r${round}-${agentId}`, status: "running", round, agentId, title: `Collaboration turn ${round}` }
+          })
+          const prompt = collabTurnPrompt(text, agentId, transcript, round, rounds, participants)
+          const result = await this.sendToAgent(task, agentId, prompt, opts)
+          const content = (result.content || "").trim()
+          if (result.error || !content) {
+            const error = result.error || `${agentId} returned an empty collaboration turn`
+            task.errors.set(agentId, error)
+            this.emit("stream", { kind: "collaborate:turn", taskId: task.id, missionId, round, agentId, status: "error", error })
+            await this.recordCollaboration({
+              type: CollaborationEventTypes.ContractStatusChanged,
+              missionId,
+              source: agentAddress(agentId),
+              payload: { contractId: `collab-r${round}-${agentId}`, status: "failed", round, agentId, error }
+            })
+            throw new Error(error)
+          }
+          transcript.push({ agentId, round, text: content })
+          this.emit("stream", { kind: "collaborate:turn", taskId: task.id, missionId, round, agentId, status: "done", content })
+          await this.recordCollaboration({
+            type: CollaborationEventTypes.ContractStatusChanged,
+            missionId,
+            source: agentAddress(agentId),
+            payload: { contractId: `collab-r${round}-${agentId}`, status: "done", round, agentId, title: `Collaboration turn ${round}`, contentPreview: content.slice(0, 1200) }
+          })
+        }
+      }
+
+      if ((task as any).status === "cancelled") return
+      this.emit("stream", { kind: "collaborate:synthesizing", taskId: task.id, missionId, leadAgentId: MAIN_AGENT_ID })
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.SynthesisStarted,
+        missionId,
+        source: agentAddress(MAIN_AGENT_ID),
+        payload: { missionId, taskId: task.id, leadAgentId: MAIN_AGENT_ID, turnCount: transcript.length }
+      })
+      const synth = await this.sendToAgent(task, MAIN_AGENT_ID, collabSynthesisPrompt(text, transcript), { ...opts, systemPrompt: ORCHESTRATOR_LEAD_SYSTEM })
+      if (synth.error || !synth.content.trim()) throw new Error("协作合成阶段失败: " + (synth.error || "empty synthesis"))
+      this.emit("stream", { kind: "collaborate:final", taskId: task.id, missionId, content: synth.content })
+      task.results.set("collaborate", synth.content)
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.SynthesisCompleted,
+        missionId,
+        source: agentAddress(MAIN_AGENT_ID),
+        payload: { missionId, taskId: task.id, leadAgentId: MAIN_AGENT_ID, summary: synth.content.slice(0, 1000) }
+      })
+      const outcome = this.missionStore?.recordOutcome({
+        missionId,
+        goal: text,
+        status: "completed",
+        summary: synth.content.slice(0, 600),
+        lessons: [],
+        blockers: [],
+        verified: true,
+        taskCount: transcript.length,
+        failedTaskIds: [],
+        resultPreview: synth.content.slice(0, 1200)
+      })
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.OutcomeRecorded,
+        missionId,
+        payload: outcome || { missionId, status: "completed", summary: synth.content.slice(0, 600), turnCount: transcript.length }
+      })
+      await this.recordUserNotification(missionId, "collaboration_completed", {
+        taskId: task.id,
+        status: "completed",
+        participants,
+        rounds,
+        summary: synth.content.slice(0, 800)
+      })
+      task.status = "completed"
+    } catch (e: any) {
+      if (task.status !== "cancelled") {
+        task.status = "failed"
+        await this.recordCollaboration({
+          type: CollaborationEventTypes.OutcomeRecorded,
+          missionId,
+          payload: { missionId, status: "failed", summary: e?.message || String(e) }
+        })
+        await this.recordUserNotification(missionId, "collaboration_failed", {
+          taskId: task.id,
+          status: "failed",
+          error: e?.message || String(e)
+        })
+      }
+      this.emit("stream", { kind: "collaborate:error", taskId: task.id, missionId, error: e?.message || String(e) })
+      throw e
+    }
   }
 
   /**
