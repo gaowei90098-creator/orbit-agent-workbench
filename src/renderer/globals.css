@@ -100,6 +100,76 @@ body {
   filter: saturate(1.05);
 }
 
+.orbit-app-shell {
+  transition:
+    opacity 0.72s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.78s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.78s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform, filter;
+}
+
+.orbit-app-shell-intro {
+  opacity: 0.16;
+  transform: scale(1.012);
+  filter: blur(8px) saturate(0.86);
+  pointer-events: none;
+}
+
+.orbit-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #010403;
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity 0.76s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.82s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.82s cubic-bezier(0.22, 1, 0.36, 1);
+  -webkit-app-region: no-drag;
+  contain: paint;
+}
+
+.orbit-intro.leaving {
+  opacity: 0;
+  transform: scale(1.018);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.orbit-intro-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  opacity: 0.98;
+}
+
+.orbit-intro::before,
+.orbit-intro::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.orbit-intro::before {
+  background:
+    radial-gradient(ellipse at 50% 48%, transparent 28%, rgba(1, 4, 3, 0.18) 58%, rgba(1, 4, 3, 0.74) 100%),
+    linear-gradient(180deg, rgba(1, 4, 3, 0.1), rgba(1, 4, 3, 0.34));
+}
+
+.orbit-intro::after {
+  background:
+    radial-gradient(ellipse at 51% 50%, rgba(88, 217, 149, 0.08), transparent 42%),
+    linear-gradient(90deg, rgba(1, 4, 3, 0.26), transparent 22%, transparent 78%, rgba(1, 4, 3, 0.26));
+  mix-blend-mode: screen;
+}
+
 /* ---------- 玻璃面板 ---------- */
 .glass {
   background: var(--glass-bg);
@@ -452,6 +522,469 @@ body {
   max-height: 220px; overflow: auto;
 }
 
+/* ---------- Orchestrate：并行泳道 / shared-context pipeline ---------- */
+.orx-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  min-height: 0;
+}
+
+.orx-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.orx-header-title {
+  font-weight: 800;
+  color: var(--tx-1);
+}
+
+.orx-header-spacer { flex: 1; min-width: 12px; }
+
+.orx-live,
+.orx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--tx-2);
+}
+
+.orx-top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.28fr);
+  gap: 12px;
+}
+
+.orx-fanout,
+.orx-summary,
+.orx-merge,
+.orx-bridge,
+.orx-final {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: rgba(9, 17, 24, 0.56);
+}
+
+.orx-fanout {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) minmax(135px, 0.34fr);
+  align-items: center;
+  gap: 13px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.orx-core {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mint);
+  font-weight: 900;
+  background: rgba(88, 217, 149, 0.1);
+  border: 1px solid rgba(88, 217, 149, 0.22);
+  box-shadow: 0 0 28px -18px var(--orx-agent, var(--mint));
+}
+
+.orx-fanout-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.orx-fanout-copy b,
+.orx-merge-copy b {
+  color: var(--tx-1);
+  font-size: 13.5px;
+}
+
+.orx-fanout-copy span,
+.orx-merge-copy small,
+.orx-summary small {
+  color: var(--tx-2);
+  font-size: 11.5px;
+}
+
+.orx-fanout-copy small {
+  color: var(--tx-3);
+  font-size: 11px;
+}
+
+.orx-ledger {
+  display: block;
+  max-width: 100%;
+  margin-top: 3px;
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(88,217,149,0.2);
+  background: rgba(88,217,149,0.08);
+  color: rgba(190, 247, 218, 0.86);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orx-dispatch {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--tx-3);
+  font-size: 11px;
+}
+
+.orx-dispatch i {
+  position: relative;
+  display: block;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+}
+
+.orx-dispatch i b {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--mint), var(--cyan), transparent);
+  animation: orx-dispatch 2.4s ease-in-out infinite;
+}
+
+.orx-summary {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+}
+
+.orx-summary span {
+  color: var(--tx-3);
+  font-size: 11px;
+}
+
+.orx-summary b {
+  color: var(--tx-1);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.orx-summary-meter,
+.orx-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+}
+
+.orx-summary-meter i,
+.orx-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.36s ease;
+}
+
+.orx-summary-meter i {
+  background: linear-gradient(90deg, var(--mint), var(--cyan));
+}
+
+.orx-lanes {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(310px, 1fr);
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 3px;
+  scroll-snap-type: x proximity;
+}
+
+.orx-lane {
+  min-height: 272px;
+  padding: 12px;
+  scroll-snap-align: start;
+  border: 1px solid rgba(170,194,220,0.13);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(18, 29, 40, 0.88), rgba(8, 14, 21, 0.76)),
+    repeating-linear-gradient(0deg, transparent 0 34px, rgba(170,194,220,0.028) 34px 35px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+}
+
+.orx-lane.running { border-color: color-mix(in srgb, var(--orx-agent, var(--mint)) 42%, rgba(170,194,220,0.15)); }
+.orx-lane.done { border-color: rgba(88,217,149,0.32); }
+.orx-lane.error,
+.orx-lane.review-failed { border-color: rgba(232,112,106,0.35); }
+
+.orx-lane-head {
+  display: grid;
+  grid-template-columns: 34px 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.orx-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.07);
+}
+
+.orx-agent-empty {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx-3);
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.orx-lane-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.orx-lane-title b {
+  color: var(--tx-1);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orx-lane-title span {
+  color: var(--tx-3);
+  font-size: 11px;
+}
+
+.orx-pill {
+  justify-self: end;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.06);
+}
+
+.orx-pill.done { color: var(--mint); background: rgba(88,217,149,0.1); border-color: rgba(88,217,149,0.18); }
+.orx-pill.running { color: var(--amber); background: rgba(232,179,77,0.1); border-color: rgba(232,179,77,0.18); }
+.orx-pill.error,
+.orx-pill.review-failed { color: var(--st-error); background: rgba(232,112,106,0.1); border-color: rgba(232,112,106,0.18); }
+
+.orx-spin {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  animation: orx-spin 0.8s linear infinite;
+}
+
+.orx-progress {
+  margin: 11px 0 10px;
+}
+
+.orx-progress i {
+  width: var(--orx-fill, 12%);
+  background: linear-gradient(90deg, var(--orx-agent, var(--mint)), var(--cyan));
+  box-shadow: 0 0 18px -7px var(--orx-agent, var(--mint));
+}
+
+.orx-lane.running .orx-progress i {
+  animation: orx-fill var(--orx-speed, 3s) ease-in-out infinite alternate;
+}
+
+.orx-contract {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+
+.orx-chip {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--tx-2);
+  font-size: 10.5px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.065);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orx-chip.scope {
+  color: rgba(190, 247, 218, 0.9);
+  background: rgba(88,217,149,0.08);
+  border-color: rgba(88,217,149,0.16);
+}
+
+.orx-chip.mono {
+  font-family: var(--font-mono);
+  color: rgba(202, 222, 244, 0.8);
+}
+
+.orx-task-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 9px;
+  color: var(--tx-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.orx-task-copy .ok { color: rgba(190, 247, 218, 0.88); }
+.orx-task-copy .bad { color: rgba(255, 173, 165, 0.9); }
+
+.orx-log {
+  min-height: 78px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0,0,0,0.17);
+  border: 1px solid rgba(255,255,255,0.055);
+  color: var(--tx-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.orx-log span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orx-content-preview {
+  max-height: 96px;
+  margin-top: 9px;
+  padding: 8px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(88,217,149,0.14);
+  background: rgba(88,217,149,0.055);
+  color: rgba(230, 239, 246, 0.78);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.orx-merge-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.34fr);
+  gap: 12px;
+}
+
+.orx-merge,
+.orx-bridge {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.orx-merge-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mint);
+  background: rgba(88,217,149,0.09);
+  border: 1px solid rgba(88,217,149,0.17);
+  font-weight: 800;
+}
+
+.orx-bridge .orx-merge-icon {
+  color: var(--cyan);
+  background: rgba(90,167,240,0.09);
+  border-color: rgba(90,167,240,0.17);
+}
+
+.orx-merge-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orx-final {
+  padding: 12px;
+}
+
+@keyframes orx-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orx-dispatch {
+  0% { transform: translateX(-85%); opacity: 0.28; }
+  18%, 82% { opacity: 1; }
+  100% { transform: translateX(235%); opacity: 0.28; }
+}
+
+@keyframes orx-fill {
+  from { width: min(var(--orx-fill, 78%), 52%); }
+  to { width: var(--orx-fill, 78%); }
+}
+
+@media (max-width: 920px) {
+  .orx-top-grid,
+  .orx-merge-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .orx-fanout {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .orx-dispatch {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 680px) {
+  .orx-header { flex-wrap: wrap; }
+  .orx-header-spacer { display: none; }
+  .orx-lanes { grid-auto-columns: minmax(284px, 88vw); }
+  .orx-lane-head { grid-template-columns: 30px 30px minmax(0, 1fr); }
+  .orx-pill { grid-column: 1 / -1; justify-self: start; }
+}
+
 /* ============================================================
    动效系统 — 三档：off / subtle / rich（html[data-motion]）
    入场用 JS 切换 class + CSS transition（避免动画冻结在首帧）
@@ -565,6 +1098,8 @@ body {
   to { background-position: -120% center; }
 }
 [data-motion="off"] .rb-shiny { animation: none; }
+[data-motion="off"] .orbit-app-shell,
+[data-motion="off"] .orbit-intro { transition: none; }
 
 /* ============================================================
    应用外壳（Electron frame:false）

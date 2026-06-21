@@ -6,6 +6,7 @@ dist/
 build/*
 !build/icon.ico
 !build/icon.png
+!build/icon.icns
 !build/icon-linux.png
 !build/installerSidebar.bmp
 !build/installer.nsh
@@ -36,6 +37,7 @@ COLLAB.md
 # UX 审查产物（Playwright 截图/快照、临时 mock 页）
 .playwright-cli/
 output/
+outputs/
 
 # 外部参考仓库：用于架构借鉴，不作为本项目源码提交
 reference_repos/

@@ -3866,6 +3866,14 @@ function buildOpenAgentsWorkspaceContext(input) {
   const history = contextLine(input.recentHistory || "", 3500);
   const handoff = String(input.handoffNote || input.handoffCapsule || "").trim();
   const reactorState = String(input.reactorState || "").trim();
+  const sharedLedger = input.sharedLedger && input.sharedLedger.path ? input.sharedLedger : null;
+  const sharedLedgerLines = sharedLedger ? [
+    `- Path: ${sharedLedger.path}`,
+    sharedLedger.absolutePath && sharedLedger.absolutePath !== sharedLedger.path ? `- Absolute path: ${sharedLedger.absolutePath}` : "",
+    `- Updated: ${sharedLedger.updatedAt || "unknown"}`,
+    "- Read this ledger before acting. Treat it as the mission's shared channel snapshot: contracts, peer outputs, artifacts, verifier notes and handoff capsules.",
+    "- If your lane changes assumptions or produces artifacts, include them in HANDOFF CAPSULE so Orbit can write them back to this ledger for the next worker."
+  ].filter(Boolean).join("\n") : "- No on-disk ledger is available; use this prompt context and final handoff capsules as the shared channel.";
   const mode = input.mode === "PLAN" ? "PLAN" : "EXECUTE";
   const modeRules = mode === "PLAN" ? [
     "- Align on shared assumptions, risks, dependencies and handoff boundaries before acting.",
@@ -3889,6 +3897,9 @@ function buildOpenAgentsWorkspaceContext(input) {
     "- The channel history, contract DAG and previous worker results are the source of truth for coordination.",
     "- Publish concise handoff notes in your final answer so the next Codex/Claude worker can continue without guessing.",
     "- Do not overwrite another worker's scope unless the contract explicitly requires it.",
+    "",
+    "### Mission Shared Ledger",
+    sharedLedgerLines,
     "",
     "### Mode Rules",
     ...modeRules,
@@ -4185,6 +4196,83 @@ function synthesisPrompt(userText, parts, workspaceContext = "") {
     blocks
   ].join("\n");
 }
+function compactCollabLine(value, limit = 1800) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+function formatCollabTurn(turn, index) {
+  return `### Turn ${index + 1} · Round ${turn.round} · ${turn.agentId}
+${turn.text || "(empty)"}`;
+}
+function compactCollabTranscript(topic, transcript) {
+  if (!Array.isArray(transcript) || transcript.length === 0) return "No prior turns yet.";
+  const recent = transcript.slice(-6);
+  const older = transcript.slice(0, -6);
+  const olderSummary = older.length ? [
+    "Earlier turns compressed for token control:",
+    buildHandoffCapsule({
+      missionId: "collaborate",
+      contract: {
+        id: "collaboration-transcript",
+        title: "Compressed collaboration transcript",
+        doneWhen: "future turns can respond to the shared record"
+      },
+      reason: "token-controlled transcript compaction",
+      previousContent: older.map(formatCollabTurn).join("\n\n"),
+      nextAction: "Use this capsule only as context. Directly answer the most recent full peer turn."
+    }),
+    ""
+  ].join("\n") : "";
+  return [
+    olderSummary,
+    "Recent full turns:",
+    recent.map((turn, index) => formatCollabTurn(turn, transcript.length - recent.length + index)).join("\n\n"),
+    "",
+    "Original topic:",
+    topic
+  ].filter(Boolean).join("\n");
+}
+function collabTurnPrompt(topic, agentId, transcript, round, totalRounds, participants = []) {
+  const lastPeer = [...(transcript || [])].reverse().find((turn) => turn.agentId !== agentId);
+  const roleHint = participants.length > 1 && participants[0] === agentId ? "You open or defend a concrete proposal, implementation path, or thesis." : "You stress-test, refine, challenge assumptions, and converge toward a better shared answer.";
+  return [
+    "You are participating in an Orbit multi-agent collaboration round.",
+    `Your agent id: ${agentId}. Round ${round} of ${totalRounds}.`,
+    roleHint,
+    "",
+    "TOPIC / USER REQUEST:",
+    topic,
+    "",
+    lastPeer ? "MOST RECENT PEER TURN TO ANSWER DIRECTLY:\n" + lastPeer.text : "There is no peer turn yet. Start with a concrete position and useful framing.",
+    "",
+    "SHARED TRANSCRIPT:",
+    compactCollabTranscript(topic, transcript || []),
+    "",
+    "RESPONSE RULES:",
+    "- Respond to specific points from the peer transcript instead of writing an isolated essay.",
+    "- Add new evidence, constraints, implementation detail, or a sharper objection.",
+    "- Move toward convergence: state what you agree with, what you dispute, and what should happen next.",
+    "- Be concise but substantive. Avoid generic praise and repeated summaries."
+  ].join("\n");
+}
+function collabSynthesisPrompt(topic, transcript) {
+  return [
+    "You are Orbit, the lead Agent synthesizing a multi-agent collaboration transcript.",
+    "Read the full shared record below and produce one final answer in the user's language.",
+    "Do not claim that files were edited or commands were run unless the transcript proves it.",
+    "",
+    "USER REQUEST:",
+    topic,
+    "",
+    "COLLABORATION TRANSCRIPT:",
+    compactCollabTranscript(topic, transcript || []),
+    "",
+    "FINAL ANSWER REQUIREMENTS:",
+    "- Name the strongest useful points from each agent.",
+    "- Resolve disagreements into a clear recommendation or conclusion.",
+    "- If this was a debate, state which side was more convincing and why.",
+    "- Include concrete next steps, risks, or acceptance checks when relevant."
+  ].join("\n");
+}
 function verifyPrompt(title, detail, result) {
   return [
     "You are a strict reviewer. Decide whether the RESULT adequately accomplishes the SUBTASK.",
@@ -4456,6 +4544,144 @@ function workspaceForPreview(workspaceId) {
     return { id: ws.id, root };
   } catch {
     return null;
+  }
+}
+function safeMissionFileName(value) {
+  const text = String(value || "mission").trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return (text || "mission").slice(0, 96);
+}
+function missionSharedContextTarget(workspaceId, missionId) {
+  const safe = safeMissionFileName(missionId);
+  const ws = workspaceForPreview(workspaceId);
+  if (ws) {
+    const relPath = path.join(".orbit", "missions", safe, "shared-context.md");
+    return {
+      workspaceId: ws.id,
+      root: ws.root,
+      relPath,
+      absPath: path.join(ws.root, relPath),
+      location: "workspace"
+    };
+  }
+  try {
+    const userDataRoot = electron.app?.getPath?.("userData");
+    if (userDataRoot) {
+      const relPath = path.join("missions", safe, "shared-context.md");
+      return {
+        workspaceId: workspaceId || "local",
+        root: userDataRoot,
+        relPath,
+        absPath: path.join(userDataRoot, relPath),
+        location: "userData"
+      };
+    }
+  } catch {
+  }
+  return null;
+}
+function ledgerStatus(node) {
+  return normalizeStatus(node?.status || "planned");
+}
+function ledgerContractLine(node) {
+  const bits = [
+    `agent=${node.agentId || "unassigned"}`,
+    `status=${ledgerStatus(node)}`,
+    node.dependsOn?.length ? `deps=${node.dependsOn.join(",")}` : "",
+    node.fileScope?.length ? `scope=${node.fileScope.slice(0, 5).join(",")}` : "",
+    node.verifyCommand ? `verify=${node.verifyCommand}` : ""
+  ].filter(Boolean);
+  return `- ${node.id}. ${node.title || "Untitled contract"} (${bits.join("; ")})`;
+}
+function writeMissionSharedContextLedger(input) {
+  const target = missionSharedContextTarget(input.workspaceId, input.missionId);
+  if (!target) return null;
+  const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const nodes = input.artifact?.taskDag?.nodes || [];
+  const previousWork = Array.isArray(input.previousWork) ? input.previousWork : [];
+  const artifacts = Array.isArray(input.artifacts) ? input.artifacts : [];
+  const waves = Array.isArray(input.waves) ? input.waves : [];
+  const handoffs = nodes.map((node) => node.__handoffCapsule ? `- ${node.id}: ${contextLine(node.__handoffCapsule, 700)}` : "").filter(Boolean);
+  const lines = [
+    "# Orbit Mission Shared Context",
+    "",
+    `Mission: ${input.missionId || "unknown"}`,
+    `Workspace: ${target.workspaceId || input.workspaceId || "local"}`,
+    `Location: ${target.location}`,
+    `Updated: ${updatedAt}`,
+    `Phase: ${input.phase || "running"}`,
+    "",
+    "## Purpose",
+    "This file is Orbit's local shared workspace channel for the mission. It mirrors the OpenAgents idea of one workspace where agents read the same history, files, browser state and task contracts.",
+    "Workers must read this before changing files, stay inside their assigned contract, and report new facts in HANDOFF CAPSULE so Orbit can refresh the ledger.",
+    "",
+    "## Mission Goal",
+    contextLine(input.goal || "", 1200) || "-",
+    "",
+    "## Shared Definition Of Done",
+    unifiedAcceptanceForGoal(input.goal || ""),
+    "",
+    "## Task DAG",
+    nodes.length ? nodes.map(ledgerContractLine).join("\n") : "- No contracts declared.",
+    "",
+    "## Contract Details",
+    nodes.length ? nodes.map((node) => [
+      `### ${node.id}. ${node.title || "Untitled contract"}`,
+      `- Agent: ${node.agentId || "unassigned"}`,
+      `- Status: ${ledgerStatus(node)}`,
+      node.detail ? `- Detail: ${contextLine(node.detail, 900)}` : "",
+      node.doneWhen ? `- Done when: ${contextLine(node.doneWhen, 500)}` : "",
+      node.interfaceRef ? `- Interface/shared contract: ${contextLine(node.interfaceRef, 600)}` : "",
+      node.verifyCommand ? `- Verify command: ${node.verifyCommand}` : "",
+      node.fileScope?.length ? `- File scope: ${node.fileScope.join(", ")}` : ""
+    ].filter(Boolean).join("\n")).join("\n\n") : "-",
+    "",
+    "## Previous Worker Results",
+    previousWork.length ? previousWork.map((item) => {
+      const body = item.error ? `FAILED: ${item.error}\n${item.summary || ""}` : item.summary || "";
+      return `### ${item.id}${item.agentId ? " [" + item.agentId + "]" : ""}\n${contextLine(body, 1200) || "-"}`;
+    }).join("\n\n") : "- No worker result has been recorded yet.",
+    "",
+    "## Artifact Registry",
+    artifacts.length ? artifacts.map((item) => {
+      const links = Array.isArray(item.links) && item.links.length ? item.links.join(" | ") : "none";
+      return `- ${item.contractId || "unknown"} [${item.agentId || "unknown"}] ${item.status || "unknown"}: ${links}${item.error ? " | error=" + contextLine(item.error, 200) : ""}`;
+    }).join("\n") : "- No artifacts detected yet.",
+    "",
+    "## Reactor Waves",
+    waves.length ? waves.slice(-8).map((wave) => {
+      const results = (wave.results || []).map((r) => `${r.id || r.title}:${r.status || (r.error ? "failed" : "done")}${r.error ? "(" + contextLine(r.error, 120) + ")" : ""}`).join(", ");
+      return `- Wave ${wave.round}: ${results || "no results"}${wave.note ? " | " + contextLine(wave.note, 180) : ""}`;
+    }).join("\n") : "- No completed wave yet.",
+    "",
+    "## Handoff Capsules",
+    handoffs.length ? handoffs.join("\n") : "- No active handoff capsule.",
+    "",
+    "## Recent Mission Timeline",
+    contextLine(input.timeline || "", 3600) || "- No recorded channel events yet."
+  ];
+  try {
+    fs.mkdirSync(path.dirname(target.absPath), { recursive: true });
+    const tmp = target.absPath + ".tmp";
+    fs.writeFileSync(tmp, lines.join("\n") + "\n", "utf-8");
+    fs.renameSync(tmp, target.absPath);
+    return {
+      path: target.location === "workspace" ? target.relPath : target.absPath,
+      absolutePath: target.absPath,
+      relPath: target.relPath,
+      workspaceId: target.workspaceId,
+      location: target.location,
+      updatedAt
+    };
+  } catch (error) {
+    return {
+      path: target.absPath,
+      absolutePath: target.absPath,
+      relPath: target.relPath,
+      workspaceId: target.workspaceId,
+      location: target.location,
+      updatedAt,
+      error: error?.message || String(error)
+    };
   }
 }
 function previewMime(filePath) {
@@ -4869,6 +5095,7 @@ const CollaborationEventTypes = {
   SynthesisStarted: "mission.synthesis.started",
   SynthesisCompleted: "mission.synthesis.completed",
   OutcomeRecorded: "mission.outcome.recorded",
+  MemoryUpdated: "memory.updated",
   UserNotificationRequested: "user.notification.requested"
 };
 function parseCollaborationAddress(raw) {
@@ -5610,6 +5837,8 @@ class Dispatcher extends events.EventEmitter {
     try {
       if (mode === "orchestrate") {
         await this.runOrchestrate(task, text, opts);
+      } else if (mode === "collaborate") {
+        await this.runCollaborate(task, text, opts);
       } else {
         const targets = this.resolveTargets(task, mode, targetAgent);
         if (targets.length === 0) throw new Error("No available provider for the requested routing. Open Settings -> Providers to configure API keys.");
@@ -5669,6 +5898,152 @@ class Dispatcher extends events.EventEmitter {
     })), this.missionStore?.getRouterContext());
     if (routed && executionBindings.find((b) => b.agentId === routed)) return [{ agentId: routed }];
     return executionBindings.length > 0 ? [{ agentId: executionBindings[0].agentId }] : [];
+  }
+  selectCollaborators(opts, workerIds) {
+    const requested = Array.isArray(opts.participants) ? opts.participants : [];
+    const priority = [...requested, "codex", "claude", ...workerIds];
+    const seen = /* @__PURE__ */ new Set();
+    const selected = [];
+    for (const raw of priority) {
+      const id = raw === "claude-code" ? "claude" : raw;
+      if (!id || seen.has(id) || !workerIds.includes(id)) continue;
+      seen.add(id);
+      selected.push(id);
+      if (selected.length >= 3) break;
+    }
+    return selected;
+  }
+  collaborationRounds(opts) {
+    const raw = Number(opts.rounds ?? 3);
+    if (!Number.isFinite(raw)) return 3;
+    return Math.max(1, Math.min(6, Math.round(raw)));
+  }
+  async runCollaborate(task, text, opts) {
+    const missionId = `mission-${task.id}`;
+    task.missionId = missionId;
+    try {
+      const mgr = getProviderManager();
+      const bindings = mgr.getBindings();
+      const workerIds = Array.from(new Set(bindings.map((binding) => binding.agentId).filter((id) => isExecutionWorkerAgent(id))));
+      const participants = this.selectCollaborators(opts, workerIds);
+      if (participants.length < 2) {
+        throw new Error("协作模式至少需要两个可执行子 Agent。请在 设置 -> 路由 绑定 Codex CLI 和 Claude Code。");
+      }
+      if (!bindings.find((binding) => binding.agentId === MAIN_AGENT_ID)) {
+        throw new Error("Orbit 主 Agent 尚未绑定。协作模式需要 Orbit 负责最终评判与合成。");
+      }
+      if (!mgr.resolveBinding(MAIN_AGENT_ID)) {
+        throw new Error("Orbit 主 Agent 尚未配置可用模型/API Key。请到 设置 -> 路由 配置 Orbit。");
+      }
+      const rounds = this.collaborationRounds(opts);
+      const transcript = [];
+      this.emit("stream", { kind: "collaborate:start", taskId: task.id, missionId, participants, rounds, topic: text });
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.MissionStarted,
+        missionId,
+        payload: { missionId, taskId: task.id, mode: "collaborate", topic: text, participants, rounds }
+      });
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.MissionStatusChanged,
+        missionId,
+        payload: { missionId, taskId: task.id, status: "running", mode: "collaborate" }
+      });
+      await this.recordUserNotification(missionId, "collaboration_started", { taskId: task.id, participants, rounds });
+      for (let round = 1; round <= rounds; round++) {
+        for (const agentId of participants) {
+          if (task.status === "cancelled") return;
+          this.emit("stream", { kind: "collaborate:turn", taskId: task.id, missionId, round, agentId, status: "running" });
+          await this.recordCollaboration({
+            type: CollaborationEventTypes.ContractStatusChanged,
+            missionId,
+            source: agentAddress(agentId),
+            payload: { contractId: `collab-r${round}-${agentId}`, status: "running", round, agentId, title: `Collaboration turn ${round}` }
+          });
+          const prompt = collabTurnPrompt(text, agentId, transcript, round, rounds, participants);
+          const result = await this.sendToAgent(task, agentId, prompt, opts);
+          const content = String(result.content || "").trim();
+          if (result.error || !content) {
+            const error = result.error || `${agentId} returned an empty collaboration turn`;
+            task.errors.set(agentId, error);
+            this.emit("stream", { kind: "collaborate:turn", taskId: task.id, missionId, round, agentId, status: "error", error });
+            await this.recordCollaboration({
+              type: CollaborationEventTypes.ContractStatusChanged,
+              missionId,
+              source: agentAddress(agentId),
+              payload: { contractId: `collab-r${round}-${agentId}`, status: "failed", round, agentId, error }
+            });
+            throw new Error(error);
+          }
+          transcript.push({ agentId, round, text: content });
+          this.emit("stream", { kind: "collaborate:turn", taskId: task.id, missionId, round, agentId, status: "done", content });
+          await this.recordCollaboration({
+            type: CollaborationEventTypes.ContractStatusChanged,
+            missionId,
+            source: agentAddress(agentId),
+            payload: { contractId: `collab-r${round}-${agentId}`, status: "done", round, agentId, title: `Collaboration turn ${round}`, contentPreview: content.slice(0, 1200) }
+          });
+        }
+      }
+      if (task.status === "cancelled") return;
+      this.emit("stream", { kind: "collaborate:synthesizing", taskId: task.id, missionId, leadAgentId: MAIN_AGENT_ID });
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.SynthesisStarted,
+        missionId,
+        source: agentAddress(MAIN_AGENT_ID),
+        payload: { missionId, taskId: task.id, leadAgentId: MAIN_AGENT_ID, turnCount: transcript.length }
+      });
+      const synth = await this.sendToAgent(task, MAIN_AGENT_ID, collabSynthesisPrompt(text, transcript), { ...opts, systemPrompt: ORCHESTRATOR_LEAD_SYSTEM });
+      if (synth.error || !String(synth.content || "").trim()) throw new Error("协作合成阶段失败: " + (synth.error || "empty synthesis"));
+      this.emit("stream", { kind: "collaborate:final", taskId: task.id, missionId, content: synth.content });
+      task.results.set("collaborate", synth.content);
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.SynthesisCompleted,
+        missionId,
+        source: agentAddress(MAIN_AGENT_ID),
+        payload: { missionId, taskId: task.id, leadAgentId: MAIN_AGENT_ID, summary: synth.content.slice(0, 1e3) }
+      });
+      const outcome = this.missionStore?.recordOutcome({
+        missionId,
+        goal: text,
+        status: "completed",
+        summary: synth.content.slice(0, 600),
+        lessons: extractLessons(synth.content),
+        blockers: [],
+        verified: true,
+        taskCount: transcript.length,
+        failedTaskIds: [],
+        resultPreview: synth.content.slice(0, 1200)
+      });
+      await this.recordCollaboration({
+        type: CollaborationEventTypes.OutcomeRecorded,
+        missionId,
+        payload: outcome || { missionId, status: "completed", summary: synth.content.slice(0, 600), turnCount: transcript.length }
+      });
+      await this.recordUserNotification(missionId, "collaboration_completed", {
+        taskId: task.id,
+        status: "completed",
+        participants,
+        rounds,
+        summary: synth.content.slice(0, 800)
+      });
+      task.status = "completed";
+    } catch (e) {
+      if (task.status !== "cancelled") {
+        task.status = "failed";
+        await this.recordCollaboration({
+          type: CollaborationEventTypes.OutcomeRecorded,
+          missionId,
+          payload: { missionId, status: "failed", summary: e?.message || String(e) }
+        });
+        await this.recordUserNotification(missionId, "collaboration_failed", {
+          taskId: task.id,
+          status: "failed",
+          error: e?.message || String(e)
+        });
+      }
+      this.emit("stream", { kind: "collaborate:error", taskId: task.id, missionId, error: e?.message || String(e) });
+      throw e;
+    }
   }
   /**
    * 编排模式：lead agent 分解任务 → 各 agent 并行执行子任务 → lead 汇总。
@@ -5881,6 +6256,8 @@ class Dispatcher extends events.EventEmitter {
       const workerIds = Array.from(bound).filter((id) => isExecutionWorkerAgent(id));
       const alternateWorker = (agentId) => workerIds.find((id) => id && id !== agentId) || "";
       const maxReadyConcurrency = Math.max(1, Number(process.env.ORBIT_ORCHESTRATE_CONCURRENCY || "2") || 2);
+      let sharedContextLedger = null;
+      let sharedContextLedgerAnnounced = false;
       const pickReadyWave = (ready2) => {
         const selected = [];
         const usedAgents = /* @__PURE__ */ new Set();
@@ -5896,6 +6273,47 @@ class Dispatcher extends events.EventEmitter {
           if (!selected.includes(st)) selected.push(st);
         }
         return selected;
+      };
+      const previousWorkSnapshot = () => artifact.taskDag.nodes.map((node) => {
+        const part = partsById.get(node.id);
+        if (!part) return null;
+        return {
+          id: node.id,
+          agentId: part.agentId || node.agentId,
+          summary: part.content || "",
+          error: part.error || ""
+        };
+      }).filter(Boolean);
+      const refreshSharedContextLedger = async (phase) => {
+        sharedContextLedger = writeMissionSharedContextLedger({
+          workspaceId: opts.workspaceId || "local",
+          missionId,
+          goal: text,
+          phase,
+          artifact,
+          previousWork: previousWorkSnapshot(),
+          artifacts: artifactRegistry,
+          waves: reactorWaves,
+          timeline: this.collaborationBus?.buildMissionTimeline(missionId, 60) || ""
+        });
+        if (sharedContextLedger && !sharedContextLedgerAnnounced) {
+          sharedContextLedgerAnnounced = true;
+          await this.recordCollaboration({
+            type: CollaborationEventTypes.MemoryUpdated,
+            missionId,
+            source: agentAddress(MAIN_AGENT_ID),
+            payload: {
+              kind: "mission_shared_context_ledger",
+              missionId,
+              path: sharedContextLedger.path,
+              absolutePath: sharedContextLedger.absolutePath,
+              location: sharedContextLedger.location,
+              error: sharedContextLedger.error || ""
+            },
+            metadata: { role: "shared-context" }
+          });
+        }
+        return sharedContextLedger;
       };
       const buildMissionContext = (currentContract, agentId, mode = "EXECUTE") => buildOpenAgentsWorkspaceContext({
         agentId: agentId || currentContract?.agentId || leadId,
@@ -5913,16 +6331,7 @@ class Dispatcher extends events.EventEmitter {
           detail: node.detail,
           status: node.status
         })),
-        previousWork: artifact.taskDag.nodes.map((node) => {
-          const part = partsById.get(node.id);
-          if (!part) return null;
-          return {
-            id: node.id,
-            agentId: part.agentId || node.agentId,
-            summary: part.content || "",
-            error: part.error || ""
-          };
-        }).filter(Boolean),
+        previousWork: previousWorkSnapshot(),
         recentHistory: this.collaborationBus?.buildMissionTimeline(missionId, 40) || "",
         reactorState: buildReactorStateSummary({
           round: reactorRound,
@@ -5932,7 +6341,8 @@ class Dispatcher extends events.EventEmitter {
           failedCount: failed.size,
           remainingCount: remaining.size
         }),
-        handoffNote: currentContract?.__handoffCapsule || ""
+        handoffNote: currentContract?.__handoffCapsule || "",
+        sharedLedger: sharedContextLedger
       });
       const peerSnapshot = () => artifact.taskDag.nodes.map((node) => {
         const part = partsById.get(node.id);
@@ -5967,6 +6377,7 @@ class Dispatcher extends events.EventEmitter {
             preview: capsule.slice(0, 1200)
           }
         });
+        await refreshSharedContextLedger(`handoff:${st.id}`);
         return capsule;
       };
       const emitPlanSnapshot = (extra = {}) => {
@@ -5976,6 +6387,7 @@ class Dispatcher extends events.EventEmitter {
           missionId,
           leadAgentId: leadId,
           planArtifact: artifact,
+          sharedContextPath: sharedContextLedger?.path,
           subtasks: artifact.taskDag.nodes.map((s) => ({
             id: s.id,
             title: s.title,
@@ -5991,6 +6403,8 @@ class Dispatcher extends events.EventEmitter {
           ...extra
         });
       };
+      await refreshSharedContextLedger("running");
+      emitPlanSnapshot({ sharedContextPath: sharedContextLedger?.path });
       const applyReactorDecision = async (decision, stateSummary) => {
         const added = [];
         const revised = [];
@@ -6077,6 +6491,7 @@ class Dispatcher extends events.EventEmitter {
             statePreview: contextLine(stateSummary, 1200)
           }
         });
+        await refreshSharedContextLedger("replanned");
         emitPlanSnapshot({ reactorDecision: decision, reactorRound });
         return true;
       };
@@ -6110,6 +6525,7 @@ class Dispatcher extends events.EventEmitter {
             payload: contractSnapshot(st, { status: "running", attempt })
           });
           try {
+            await refreshSharedContextLedger(`contract:${st.id}:attempt-${attempt}`);
             const contractContext = buildMissionContext(st, st.agentId || "unassigned", attempt === 1 ? "EXECUTE" : "PLAN");
             const contractPrompt = subtaskContractPrompt(st, contractContext);
             const prompt = attempt === 1 ? contractPrompt : retryPrompt(contractPrompt, lastNote);
@@ -6493,6 +6909,8 @@ class Dispatcher extends events.EventEmitter {
         this.missionStore?.upsertPlan(artifact);
         reactorWaves.push({ round: reactorRound, results: waveResults });
         if (reactorWaves.length > 10) reactorWaves.shift();
+        await refreshSharedContextLedger(`wave:${reactorRound}:complete`);
+        emitPlanSnapshot({ reactorRound, sharedContextPath: sharedContextLedger?.path });
         if (remaining.size > 0 && task.status !== "cancelled" && replanRounds < maxReplanRounds) {
           replanRounds += 1;
           const stateSummary = buildReactorStateSummary({
@@ -6556,12 +6974,16 @@ class Dispatcher extends events.EventEmitter {
         interfaceRef: "mission final response",
         status: "running"
       };
+      await refreshSharedContextLedger("synthesizing");
       const synthesisContext = buildMissionContext(synthesisContract, leadId, "PLAN");
       const synth = await this.sendToAgent(task, leadId, synthesisContext + "\n\n" + synthesisPrompt(text, synthesisParts, this.workspaceContextFor(opts.workspaceId)), { ...opts, systemPrompt: ORCHESTRATOR_LEAD_SYSTEM });
       if (synth.error) throw new Error("汇总阶段失败: " + synth.error);
       this.emit("stream", { kind: "orchestrate:final", taskId: task.id, content: synth.content });
       task.results.set("orchestrate", synth.content);
       this.missionStore?.setPlanStatus(missionId, failed.size ? "failed" : "completed");
+      artifact = setPlanStatus(artifact, failed.size ? "failed" : "completed");
+      task.planArtifact = artifact;
+      await refreshSharedContextLedger(failed.size ? "failed" : "completed");
       await this.recordCollaboration({
         type: CollaborationEventTypes.SynthesisCompleted,
         missionId,
@@ -9903,7 +10325,9 @@ async function initHub() {
         {
           thinking: message.payload.thinking,
           workspaceId: message.payload.workspaceId ?? null,
-          requirePlanApproval: !!message.payload.requirePlanApproval
+          requirePlanApproval: !!message.payload.requirePlanApproval,
+          rounds: message.payload.rounds,
+          participants: message.payload.participants
         }
       );
       recordDispatchOutcome(task);
@@ -9967,7 +10391,9 @@ electron.ipcMain.handle("hub:dispatch", async (_event, payload) => {
   const task = await dispatcher?.dispatch(payload.text, payload.mode || "auto", payload.targetAgent, {
     thinking: payload.thinking,
     workspaceId: payload.workspaceId ?? null,
-    requirePlanApproval: !!payload.requirePlanApproval
+    requirePlanApproval: !!payload.requirePlanApproval,
+    rounds: payload.rounds,
+    participants: payload.participants
   });
   if (task) recordDispatchOutcome(task);
   return task;

@@ -74,6 +74,7 @@ export const CollaborationEventTypes = {
   SynthesisStarted: 'mission.synthesis.started',
   SynthesisCompleted: 'mission.synthesis.completed',
   OutcomeRecorded: 'mission.outcome.recorded',
+  MemoryUpdated: 'memory.updated',
   UserNotificationRequested: 'user.notification.requested'
 } as const
 

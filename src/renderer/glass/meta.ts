@@ -4,6 +4,7 @@
    ============================================================ */
 
 import type { OrchestrateState } from './orchestrate-view'
+import type { CollaborateState } from './collaborate-view'
 
 export interface AgentMeta {
   name: string
@@ -56,9 +57,9 @@ export const STATUS_ZH: Record<AgentUIStatus, string> = {
   idle: '空闲', busy: '运行中', error: '异常', off: '未启用'
 }
 
-export type DispatchMode = 'auto' | 'broadcast' | 'chain' | 'orchestrate'
+export type DispatchMode = 'auto' | 'broadcast' | 'chain' | 'orchestrate' | 'collaborate'
 
-export const MODE_ZH: Record<string, string> = { auto: '智能路由', broadcast: '广播', chain: '接力', orchestrate: '编排' }
+export const MODE_ZH: Record<string, string> = { auto: '智能路由', broadcast: '广播', chain: '接力', orchestrate: '编排', collaborate: '协作' }
 
 export type TaskUIStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -230,6 +231,8 @@ export interface ChatMessage {
   replies: ReplyState[]
   /** 编排模式：由 orchestrate:* 事件经 reducer 聚合 */
   orchestration?: OrchestrateState
+  /** 协作模式：由 collaborate:* 事件经 reducer 聚合 */
+  collaboration?: CollaborateState
 }
 
 export interface WorkspaceItem {
